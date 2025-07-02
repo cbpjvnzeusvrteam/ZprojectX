@@ -9,12 +9,11 @@ import time
 
 TOKEN = "7539540916:AAFH3TBho-13IT6RB_nynN1T9j83GizVDNo"
 APP_URL = "https://zproject-111.onrender.com"
-ADMIN_ID = 5819094246  # Cập nhật đúng ID admin thật
+ADMIN_ID = 5819094246
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-# ==== Biến lưu danh sách ID từ server ====
 USER_IDS = set()
 GROUP_INFOS = []
 
@@ -32,8 +31,6 @@ def sync_chat_to_server(chat):
     except:
         pass
 
-# ==== Tải danh sách ID từ server mỗi 1 giây ====
-
 def update_id_list_loop():
     global USER_IDS, GROUP_INFOS
     while True:
@@ -48,12 +45,10 @@ def update_id_list_loop():
 
 Thread(target=update_id_list_loop, daemon=True).start()
 
-# ==== START ====
-
+# ===== /start =====
 @bot.message_handler(commands=["start"])
 def start_cmd(message):
     sync_chat_to_server(message.chat)
-
     markup = InlineKeyboardMarkup()
     markup.add(
         InlineKeyboardButton("👤 Admin ZProject", url="https://t.me/zproject2"),
@@ -62,92 +57,90 @@ def start_cmd(message):
     )
     intro = (
         "<b>👋 Xin chào!</b>\n\n"
-        "Tôi là trợ lý kiểm tra email rò rỉ – bạn chỉ cần gửi một địa chỉ email như <code>abc@gmail.com</code>\n"
-        "Tôi sẽ kiểm tra nó đã từng xuất hiện trong các vụ rò rỉ dữ liệu hay chưa 🔐\n\n"
+        "Tôi là trợ lý kiểm tra email bị rò rỉ dữ liệu.\n"
+        "Chỉ cần gửi email (hoặc dùng /checkmail concacsex@gmail.com), tôi sẽ kiểm tra nó có từng xuất hiện trong leak nào hay không.\n\n"
         "<b>👑 Admin:</b> ZProject\n\n"
-        "👇 Tham gia các nhóm của ZProject để cập nhật thông tin!"
+        "👇 Tham gia các nhóm ZProject để nhận thông báo:"
     )
     bot.send_message(message.chat.id, intro, parse_mode="HTML", reply_markup=markup)
 
-# ==== /checkmail (hoặc gửi email bất kỳ) ====
-
+# ===== /checkmail hoặc gửi email bất kỳ =====
 @bot.message_handler(commands=["checkmail"])
-def checkmail_cmd(message):
-    bot.reply_to(message, "📩 Gửi địa chỉ email cần kiểm tra sau lệnh này.")
+def checkmail_cmd(msg):
+    parts = msg.text.strip().split()
+    if len(parts) == 2 and "@" in parts[1]:
+        fake = telebot.types.Message(
+            id=msg.message_id + 1,
+            date=msg.date,
+            chat=msg.chat,
+            from_user=msg.from_user,
+            content_type="text",
+            json_string={},
+            options={},
+        )
+        fake.text = parts[1]
+        check_email(fake)
+    else:
+        bot.reply_to(msg, "📩 Gửi /checkmail concacsex@gmail.com hoặc chỉ cần gửi email để kiểm tra.")
 
 @bot.message_handler(func=lambda m: "@" in m.text and "." in m.text)
 def check_email(message):
     email = message.text.strip()
     sync_chat_to_server(message.chat)
-    status_msg = bot.reply_to(message, f"<b>⏳ Zproject Đang kiểm tra email:</b> <code>{email}</code>", parse_mode="HTML")
-
+    status = bot.reply_to(message, f"<b>⏳ Đang kiểm tra:</b> <code>{email}</code>", parse_mode="HTML")
     try:
-        url = f"https://haveibeenpwned.com/unifiedsearch/{email}"
-        headers = {"User-Agent": "ZProject LeakBot"}
-        r = requests.get(url, headers=headers, timeout=5)
-
-        if r.status_code == 404:
-            result = f"✅ <b><==> Zproject Bot Check <==></b>\n\nXin Chúc Mừng Bạn Nhá:v \nEmail <code>{email}</code> chưa từng xuất hiện trong vụ rò rỉ nào."
-        elif r.status_code == 200:
-            result = (
-                f"⚠️ <b><==> Bot Check <==></b>\n\n"
-                f"<code>{email}</code> đã bị rò rỉ dữ liệu trên internet.\n"
-                f"🔗 Kiểm tra chi tiết tại:\n"
-                f"<code>https://haveibeenpwned.com/unifiedsearch/{email}</code>"
-            )
+        r = requests.get(f"https://leakcheck.net/api/?check={email}", timeout=5)
+        txt = r.text.strip()
+        if "No leaks" in txt or "not found" in txt or txt == "":
+            result = f"✅ <b><==> ZProject Bot Check <==></b>\n\nXin Chúc Mừng 🎉\nEmail <code>{email}</code> chưa từng bị rò rỉ!"
         else:
-            result = "❌ Không thể kết nối hệ thống kiểm tra hoặc bị giới hạn lượt truy cập."
-
+            result = f"⚠️ <b><==> ZProject Bot Check <==></b>\n\nEmail <code>{email}</code> đã bị rò rỉ:\n\n<code>{txt[:1000]}</code>"
     except Exception as e:
         result = f"🚫 Lỗi kiểm tra: <code>{e}</code>"
 
     try:
-        bot.edit_message_text(result, chat_id=status_msg.chat.id, message_id=status_msg.message_id, parse_mode="HTML")
+        bot.edit_message_text(result, status.chat.id, status.message_id, parse_mode="HTML")
     except:
         bot.send_message(message.chat.id, result, parse_mode="HTML")
 
-# ==== /noti (admin gửi thông báo) ====
-
+# ===== /noti =====
 @bot.message_handler(commands=["noti"])
-def send_noti(message):
-    if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "🚫 Chỉ admin mới dùng được.")
-    text = message.text.replace("/noti", "").strip()
+def send_noti(msg):
+    if msg.from_user.id != ADMIN_ID:
+        return bot.reply_to(msg, "🚫 Không có quyền.")
+    text = msg.text.replace("/noti", "").strip()
     if not text:
-        return bot.reply_to(message, "⚠️ Cú pháp: /noti nội_dung")
+        return bot.reply_to(msg, "⚠️ Dùng: /noti nội_dung")
 
-    sent, failed = 0, 0
-    noti_text = f"<b>[!] THÔNG BÁO TỪ ZPROJECT</b>\n\n{text}"
-
-    for uid in USER_IDS.union({g["id"] for g in GROUP_INFOS}):
+    notify = f"<b>[!] THÔNG BÁO</b>\n\n{text}"
+    ok, fail = 0, 0
+    all_ids = USER_IDS.union({g["id"] for g in GROUP_INFOS})
+    for uid in all_ids:
         try:
-            bot.send_message(uid, noti_text, parse_mode="HTML")
-            sent += 1
+            bot.send_message(uid, notify, parse_mode="HTML")
+            ok += 1
         except:
-            failed += 1
+            fail += 1
+    bot.reply_to(msg, f"✅ Gửi: {ok} | ❌ Lỗi: {fail}")
 
-    bot.reply_to(message, f"✅ Đã gửi: {sent}\n❌ Thất bại: {failed}")
-
-# ==== /sever (admin xem danh sách group) ====
-
+# ===== /sever =====
 @bot.message_handler(commands=["sever"])
-def show_server_info(message):
-    if message.from_user.id != ADMIN_ID:
-        return bot.reply_to(message, "🚫 Không có quyền truy cập.")
+def show_groups(msg):
+    if msg.from_user.id != ADMIN_ID:
+        return bot.reply_to(msg, "🚫 Không có quyền.")
     if not GROUP_INFOS:
-        return bot.reply_to(message, "⚠️ Chưa có dữ liệu nhóm.")
-
-    text = "<b>📦 Danh sách nhóm bot đang ghi nhận:</b>\n\n"
+        return bot.reply_to(msg, "⛔ Chưa có nhóm nào.")
+    text = "<b>📦 All Nhóm Bot Đã Join:</b>\n\n"
     for g in GROUP_INFOS:
-        link = f"https://t.me/{g['username']}" if g.get("username") else "🚫 Chưa có link"
-        text += f"📌 <b>{g.get('title', 'Không rõ')}</b>\n{link}\n\n"
-    bot.reply_to(message, text, parse_mode="HTML", disable_web_page_preview=True)
+        title = g.get("title", "Không rõ")
+        link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Chưa có link"
+        text += f"📌 <b>{title}</b>\n{link}\n\n"
+    bot.reply_to(msg, text, parse_mode="HTML", disable_web_page_preview=True)
 
-# ==== FLASK + WEBHOOK ====
-
+# ===== FLASK WEBHOOK =====
 @app.route("/")
 def index():
-    return "<h3>🔐 ZProject LeakBot đang hoạt động.</h3>"
+    return "<h3>🤖 ZProject LeakBot đang chạy!</h3>"
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
@@ -161,4 +154,4 @@ if __name__ == "__main__":
         bot.set_webhook(url=f"{APP_URL}/{TOKEN}")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
     except Exception as e:
-        print(f"Khởi động lỗi: {e}")
+        print("[BOOT ERROR]", e)
