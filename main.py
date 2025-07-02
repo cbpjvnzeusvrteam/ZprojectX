@@ -6,6 +6,7 @@ from flask import Flask, request
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from threading import Thread
 import time
+from bs4 import BeautifulSoup
 
 TOKEN = "7539540916:AAFH3TBho-13IT6RB_nynN1T9j83GizVDNo"
 APP_URL = "https://zproject-111.onrender.com"
@@ -57,10 +58,10 @@ def start_cmd(message):
     )
     intro = (
         "<b>👋 Xin chào!</b>\n\n"
-        "Tôi là trợ lý kiểm tra email bị rò rỉ dữ liệu.\n"
-        "Chỉ cần gửi email (hoặc dùng /checkmail concacsex@gmail.com), tôi sẽ kiểm tra nó có từng xuất hiện trong leak nào hay không.\n\n"
+        "Tôi là ZProject Bot – giúp kiểm tra địa chỉ email có từng bị rò rỉ dữ liệu không.\n"
+        "Dùng lệnh /checkmail concac@gmail.com hoặc chỉ cần gửi email bot sẽ tự nhận check!\n\n"
         "<b>👑 Admin:</b> ZProject\n\n"
-        "👇 Tham gia các nhóm ZProject để nhận thông báo:"
+        "👇 Tham gia các nhóm cộng đồng để nhận hỗ trợ:"
     )
     bot.send_message(message.chat.id, intro, parse_mode="HTML", reply_markup=markup)
 
@@ -69,37 +70,38 @@ def start_cmd(message):
 def checkmail_cmd(msg):
     parts = msg.text.strip().split()
     if len(parts) == 2 and "@" in parts[1]:
-        fake = telebot.types.Message(
-            id=msg.message_id + 1,
-            date=msg.date,
-            chat=msg.chat,
-            from_user=msg.from_user,
-            content_type="text",
-            json_string={},
-            options={},
-        )
+        fake = msg
         fake.text = parts[1]
         check_email(fake)
     else:
-        bot.reply_to(msg, "📩 Gửi /checkmail concacsex@gmail.com hoặc chỉ cần gửi email để kiểm tra.")
+        bot.reply_to(msg, "📩 Dùng /checkmail email@example.com hoặc chỉ cần gửi email.")
 
 @bot.message_handler(func=lambda m: "@" in m.text and "." in m.text)
 def check_email(message):
     email = message.text.strip()
     sync_chat_to_server(message.chat)
-    status = bot.reply_to(message, f"<b>⏳ Đang kiểm tra:</b> <code>{email}</code>", parse_mode="HTML")
-    try:
-        r = requests.get(f"https://leakcheck.net/api/?check={email}", timeout=5)
-        txt = r.text.strip()
-        if "No leaks" in txt or "not found" in txt or txt == "":
-            result = f"✅ <b><==> ZProject Bot Check <==></b>\n\nXin Chúc Mừng 🎉\nEmail <code>{email}</code> chưa từng bị rò rỉ!"
-        else:
-            result = f"⚠️ <b><==> ZProject Bot Check <==></b>\n\nEmail <code>{email}</code> đã bị rò rỉ:\n\n<code>{txt[:1000]}</code>"
-    except Exception as e:
-        result = f"🚫 Lỗi kiểm tra: <code>{e}</code>"
+    msg = bot.reply_to(message, f"<b>⏳ Đang kiểm tra:</b> <code>{email}</code>", parse_mode="HTML")
 
     try:
-        bot.edit_message_text(result, status.chat.id, status.message_id, parse_mode="HTML")
+        url = f"https://haveibeenpwned.com/account/{email}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
+        alert = soup.find("div", {"class": "pwnedSummary"})
+
+        if alert:
+            result = (
+                f"⚠️ <b><==> ZProject Bot Check <==></b>\n\n"
+                f"<code>{email}</code> đã bị rò rỉ dữ liệu trên internet!\n"
+                f"🔗 Chi tiết: https://haveibeenpwned.com/account/{email}"
+            )
+        else:
+            result = f"✅ <b><==> ZProject Bot Check <==></b>\n\n<code>{email}</code> chưa từng bị rò rỉ!"
+    except Exception as e:
+        result = f"🚫 Lỗi kiểm tra email: <code>{e}</code>"
+
+    try:
+        bot.edit_message_text(result, msg.chat.id, msg.message_id, parse_mode="HTML")
     except:
         bot.send_message(message.chat.id, result, parse_mode="HTML")
 
@@ -133,14 +135,14 @@ def show_groups(msg):
     text = "<b>📦 All Nhóm Bot Đã Join:</b>\n\n"
     for g in GROUP_INFOS:
         title = g.get("title", "Không rõ")
-        link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Chưa có link"
+        link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Không có link"
         text += f"📌 <b>{title}</b>\n{link}\n\n"
     bot.reply_to(msg, text, parse_mode="HTML", disable_web_page_preview=True)
 
-# ===== FLASK WEBHOOK =====
+# ===== Webhook Flask =====
 @app.route("/")
 def index():
-    return "<h3>🤖 ZProject LeakBot đang chạy!</h3>"
+    return "<h3>🤖 ZProject Bot đang hoạt động ổn định!</h3>"
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
