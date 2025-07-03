@@ -1,13 +1,15 @@
 import os
-import requests
-import telebot
-from flask import Flask, request
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from threading import Thread
-from bs4 import BeautifulSoup
 import time
+import requests
+from flask import Flask, request
+from bs4 import BeautifulSoup
+from threading import Thread
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Cấu hình
+# Selenium setup
+import undetected_chromedriver as uc
+
 TOKEN = "7539540916:AAFH3TBho-13IT6RB_nynN1T9j83GizVDNo"
 APP_URL = "https://zproject-111.onrender.com"
 ADMIN_ID = 5819094246
@@ -59,10 +61,9 @@ def start_cmd(message):
     bot.send_message(
         message.chat.id,
         "<b>🚀 ZProject Bypass Bot</b>\n\n"
-        "🔗 Bạn khó chịu vì link rút gọn mất thời gian? Bot này hỗ trợ vượt nhanh <b>Link4M.com</b> chỉ với cú pháp:\n"
+        "🔗 Vượt nhanh Link4M.com bảo mật cao với cú pháp:\n"
         "<code>/get4m https://link4m.com/abcxyz</code>\n\n"
-        "🕒 Dùng /time để xem thời gian bot đã hoạt động.\n"
-        "📢 Admin có thể gửi thông báo cho tất cả người dùng bằng /noti.",
+        "🕒 Xem thời gian bot hoạt động với /time.",
         reply_markup=markup,
         parse_mode="HTML"
     )
@@ -88,25 +89,30 @@ def bypass_link4m(message):
         return bot.reply_to(message, "⚠️ Dùng: /get4m https://link4m.com/abcxyz")
 
     short_url = parts[1]
-
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-        }
-        s = requests.Session()
-        r = s.get(short_url, headers=headers, allow_redirects=True, timeout=10)
-        final_url = r.url
+        bot.reply_to(message, "🧠 Đang vượt Link4M... vui lòng đợi vài giây")
+        options = uc.ChromeOptions()
+        options.add_argument("--headless")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--no-sandbox")
+        driver = uc.Chrome(options=options)
+
+        driver.get(short_url)
+        time.sleep(6)  # đủ thời gian để JS redirect
+
+        final_url = driver.current_url
+        driver.quit()
 
         if "link4m.com" in final_url:
-            soup = BeautifulSoup(r.text, "html.parser")
-            a_tag = soup.find("a", {"id": "link"})
-            if a_tag and a_tag.get("href"):
-                final_url = a_tag["href"]
+            soup = BeautifulSoup(requests.get(final_url).text, "html.parser")
+            tag = soup.find("a", {"id": "link"})
+            if tag and tag.get("href"):
+                final_url = tag["href"]
 
-        bot.reply_to(message, f"✅ Link gốc:\n<code>{final_url}</code>", parse_mode="HTML")
+        bot.send_message(message.chat.id, f"✅ Link gốc thực sự:\n<code>{final_url}</code>", parse_mode="HTML")
 
     except Exception as e:
-        bot.reply_to(message, f"🚫 Lỗi vượt link: <code>{e}</code>", parse_mode="HTML")
+        bot.send_message(message.chat.id, f"🚫 Lỗi vượt link: <code>{e}</code>", parse_mode="HTML")
 
 @bot.message_handler(commands=["noti"])
 def send_noti(message):
@@ -131,10 +137,10 @@ def show_groups(message):
         return bot.reply_to(message, "🚫 Không có quyền.")
     if not GROUP_INFOS:
         return bot.reply_to(message, "📭 Chưa có nhóm nào.")
-    text = "<b>📦 Tất cả nhóm đã tham gia:</b>\n\n"
+    text = "<b>📦 Danh sách nhóm:</b>\n\n"
     for g in GROUP_INFOS:
         title = g.get("title", "Không rõ")
-        link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Không có link"
+        link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Chưa có link"
         text += f"📌 <b>{title}</b>\n{link}\n\n"
     bot.reply_to(message, text, parse_mode="HTML", disable_web_page_preview=True)
 
