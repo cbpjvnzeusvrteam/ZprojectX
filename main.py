@@ -2,17 +2,17 @@ import os
 import time
 import requests
 from flask import Flask, request
-from bs4 import BeautifulSoup
 from threading import Thread
+from bs4 import BeautifulSoup
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-# Selenium setup
 import undetected_chromedriver as uc
+from selenium.webdriver.chrome.options import Options
 
+# === Cấu hình ===
 TOKEN = "7539540916:AAFH3TBho-13IT6RB_nynN1T9j83GizVDNo"
 APP_URL = "https://zproject-111.onrender.com"
-ADMIN_ID = 5819094246
+ADMIN_ID = 5819094246  # Telegram user ID của bạn
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
@@ -21,6 +21,7 @@ START_TIME = time.time()
 USER_IDS = set()
 GROUP_INFOS = []
 
+# === Đồng bộ nhóm/người dùng từ API ===
 def sync_chat_to_server(chat):
     if chat.type not in ["private", "group", "supergroup"]:
         return
@@ -49,6 +50,7 @@ def update_id_list_loop():
 
 Thread(target=update_id_list_loop, daemon=True).start()
 
+# === Lệnh /start ===
 @bot.message_handler(commands=["start"])
 def start_cmd(message):
     sync_chat_to_server(message.chat)
@@ -61,59 +63,68 @@ def start_cmd(message):
     bot.send_message(
         message.chat.id,
         "<b>🚀 ZProject Bypass Bot</b>\n\n"
-        "🔗 Vượt nhanh Link4M.com bảo mật cao với cú pháp:\n"
+        "🔗 Gõ lệnh để bypass Link4M nhanh chóng:\n"
         "<code>/get4m https://link4m.com/abcxyz</code>\n\n"
-        "🕒 Xem thời gian bot hoạt động với /time.",
+        "🕒 Kiểm tra thời gian hoạt động bằng /time.",
         reply_markup=markup,
         parse_mode="HTML"
     )
 
+# === Lệnh /time ===
 @bot.message_handler(commands=["time"])
 def time_cmd(message):
     now = time.time()
     seconds = int(now - START_TIME)
-    days = seconds // (24 * 3600)
-    hours = (seconds % (24 * 3600)) // 3600
+    days = seconds // 86400
+    hours = (seconds % 86400) // 3600
     minutes = (seconds % 3600) // 60
     sec = seconds % 60
-    bot.reply_to(
-        message,
-        f"⏱️ Bot đã hoạt động:\n<b>{days} ngày {hours} giờ {minutes} phút {sec} giây</b>",
+    bot.reply_to(message,
+        f"⏱️ Bot đã hoạt động được:\n<b>{days} ngày {hours} giờ {minutes} phút {sec} giây</b>",
         parse_mode="HTML"
     )
 
+# === Lệnh /get4m ===
 @bot.message_handler(commands=["get4m"])
 def bypass_link4m(message):
     parts = message.text.split()
     if len(parts) != 2 or "link4m.com" not in parts[1]:
-        return bot.reply_to(message, "⚠️ Dùng: /get4m https://link4m.com/abcxyz")
+        return bot.reply_to(message, "⚠️ Dùng: /get4m https://link4m.com/abcdxyz")
 
     short_url = parts[1]
+    bot.reply_to(message, "🧠 Đang xử lý... vui lòng chờ 5–10 giây")
+
     try:
-        bot.reply_to(message, "🧠 Đang vượt Link4M... vui lòng đợi vài giây")
-        options = uc.ChromeOptions()
+        options = Options()
         options.add_argument("--headless")
-        options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-dev-shm-usage")
+        options.binary_location = "/usr/bin/google-chrome"  # đường dẫn Chrome trên Render
+
         driver = uc.Chrome(options=options)
-
         driver.get(short_url)
-        time.sleep(6)  # đủ thời gian để JS redirect
+        time.sleep(8)  # chờ JS redirect
 
-        final_url = driver.current_url
+        real_url = driver.current_url
         driver.quit()
 
-        if "link4m.com" in final_url:
-            soup = BeautifulSoup(requests.get(final_url).text, "html.parser")
-            tag = soup.find("a", {"id": "link"})
-            if tag and tag.get("href"):
-                final_url = tag["href"]
+        # Nếu vẫn là link4m thì tìm thêm link gốc từ thẻ <a id="link">
+        if "link4m.com" in real_url:
+            try:
+                soup = BeautifulSoup(requests.get(real_url, timeout=10).text, "html.parser")
+                tag = soup.find("a", {"id": "link"})
+                if tag and tag.get("href"):
+                    real_url = tag["href"]
+            except:
+                pass
 
-        bot.send_message(message.chat.id, f"✅ Link gốc thực sự:\n<code>{final_url}</code>", parse_mode="HTML")
+        bot.send_message(message.chat.id, f"✅ Link gốc thực sự:\n<code>{real_url}</code>", parse_mode="HTML")
 
     except Exception as e:
         bot.send_message(message.chat.id, f"🚫 Lỗi vượt link: <code>{e}</code>", parse_mode="HTML")
 
+# === Lệnh /noti ===
 @bot.message_handler(commands=["noti"])
 def send_noti(message):
     if message.from_user.id != ADMIN_ID:
@@ -131,6 +142,7 @@ def send_noti(message):
             fail += 1
     bot.reply_to(message, f"✅ Gửi: {ok} | ❌ Lỗi: {fail}")
 
+# === Lệnh /sever ===
 @bot.message_handler(commands=["sever"])
 def show_groups(message):
     if message.from_user.id != ADMIN_ID:
@@ -140,10 +152,11 @@ def show_groups(message):
     text = "<b>📦 Danh sách nhóm:</b>\n\n"
     for g in GROUP_INFOS:
         title = g.get("title", "Không rõ")
-        link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Chưa có link"
+        link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Không có link"
         text += f"📌 <b>{title}</b>\n{link}\n\n"
     bot.reply_to(message, text, parse_mode="HTML", disable_web_page_preview=True)
 
+# === Webhook Flask ===
 @app.route("/")
 def index():
     return "<h3>🛰️ ZProject BypassBot is live!</h3>"
@@ -154,6 +167,7 @@ def webhook():
     bot.process_new_updates([update])
     return "OK", 200
 
+# === Khởi chạy ===
 if __name__ == "__main__":
     try:
         bot.remove_webhook()
