@@ -1,6 +1,5 @@
 import os
 import requests
-import json
 import telebot
 from flask import Flask, request
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -8,6 +7,7 @@ from threading import Thread
 from bs4 import BeautifulSoup
 import time
 
+# Cấu hình
 TOKEN = "7539540916:AAFH3TBho-13IT6RB_nynN1T9j83GizVDNo"
 APP_URL = "https://zproject-111.onrender.com"
 ADMIN_ID = 5819094246
@@ -59,14 +59,14 @@ def start_cmd(message):
     bot.send_message(
         message.chat.id,
         "<b>🚀 ZProject Bypass Bot</b>\n\n"
-        "🔗 Bạn khó chịu vì link rút gọn mất thời gian? Bot này hỗ trợ vượt nhanh <b>Link4M.com</b> chỉ với 1 cú pháp đơn giản:\n"
+        "🔗 Bạn khó chịu vì link rút gọn mất thời gian? Bot này hỗ trợ vượt nhanh <b>Link4M.com</b> chỉ với cú pháp:\n"
         "<code>/get4m https://link4m.com/abcxyz</code>\n\n"
-        "🕒 Ngoài ra, bạn có thể dùng lệnh /time để xem thời gian bot đã hoạt động.\n"
-        "📢 Admin cũng có thể gửi thông báo nhanh tới toàn bộ người dùng bằng /noti.",
+        "🕒 Dùng /time để xem thời gian bot đã hoạt động.\n"
+        "📢 Admin có thể gửi thông báo cho tất cả người dùng bằng /noti.",
         reply_markup=markup,
         parse_mode="HTML"
     )
-    
+
 @bot.message_handler(commands=["time"])
 def time_cmd(message):
     now = time.time()
@@ -77,7 +77,7 @@ def time_cmd(message):
     sec = seconds % 60
     bot.reply_to(
         message,
-        f"⏱️ Bot đã hoạt động được:\n<b>{days} ngày {hours} giờ {minutes} phút {sec} giây</b>",
+        f"⏱️ Bot đã hoạt động:\n<b>{days} ngày {hours} giờ {minutes} phút {sec} giây</b>",
         parse_mode="HTML"
     )
 
@@ -85,7 +85,7 @@ def time_cmd(message):
 def bypass_link4m(message):
     parts = message.text.split()
     if len(parts) != 2 or "link4m.com" not in parts[1]:
-        return bot.reply_to(message, "⚠️ Dùng: /get4m https://link4m.com/abcd123")
+        return bot.reply_to(message, "⚠️ Dùng: /get4m https://link4m.com/abcxyz")
 
     short_url = parts[1]
 
@@ -93,7 +93,6 @@ def bypass_link4m(message):
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
         }
-
         s = requests.Session()
         r = s.get(short_url, headers=headers, allow_redirects=True, timeout=10)
         final_url = r.url
@@ -132,16 +131,16 @@ def show_groups(message):
         return bot.reply_to(message, "🚫 Không có quyền.")
     if not GROUP_INFOS:
         return bot.reply_to(message, "📭 Chưa có nhóm nào.")
-    text = "<b>📦 All Group Join:</b>\n\n"
+    text = "<b>📦 Tất cả nhóm đã tham gia:</b>\n\n"
     for g in GROUP_INFOS:
         title = g.get("title", "Không rõ")
-        link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Chưa có link"
+        link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Không có link"
         text += f"📌 <b>{title}</b>\n{link}\n\n"
     bot.reply_to(message, text, parse_mode="HTML", disable_web_page_preview=True)
 
 @app.route("/")
 def index():
-    return "<h3>🛰️ ZProject LeakBot is live!</h3>"
+    return "<h3>🛰️ ZProject BypassBot is live!</h3>"
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
