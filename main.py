@@ -14,12 +14,11 @@ ADMIN_ID = 5819094246
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
+START_TIME = time.time()
 
 USER_IDS = set()
 GROUP_INFOS = []
-CHECKED_EMAILS = {}  # Lưu thời gian đã check để chống spam
 
-# Đồng bộ user/group lên PHP API
 def sync_chat_to_server(chat):
     if chat.type not in ["private", "group", "supergroup"]:
         return
@@ -34,7 +33,6 @@ def sync_chat_to_server(chat):
     except:
         pass
 
-# Cập nhật danh sách ID từ server
 def update_id_list_loop():
     global USER_IDS, GROUP_INFOS
     while True:
@@ -49,7 +47,6 @@ def update_id_list_loop():
 
 Thread(target=update_id_list_loop, daemon=True).start()
 
-# START
 @bot.message_handler(commands=["start"])
 def start_cmd(message):
     sync_chat_to_server(message.chat)
@@ -61,61 +58,57 @@ def start_cmd(message):
     )
     bot.send_message(
         message.chat.id,
-        "<b>👋 Xin chào!</b>\n\nGửi email bất kỳ hoặc dùng /checkmail để kiểm tra xem địa chỉ đó đã từng bị rò rỉ dữ liệu chưa 🔐",
+        "<b>🚀 ZProject Bypass Bot</b>\n\n"
+        "🔗 Bạn khó chịu vì link rút gọn mất thời gian? Bot này hỗ trợ vượt nhanh <b>Link4M.com</b> chỉ với 1 cú pháp đơn giản:\n"
+        "<code>/get4m https://link4m.com/abcxyz</code>\n\n"
+        "🕒 Ngoài ra, bạn có thể dùng lệnh /time để xem thời gian bot đã hoạt động.\n"
+        "📢 Admin cũng có thể gửi thông báo nhanh tới toàn bộ người dùng bằng /noti.",
         reply_markup=markup,
         parse_mode="HTML"
     )
-
-# /checkmail email
-@bot.message_handler(commands=["checkmail"])
-def checkmail_cmd(msg):
-    parts = msg.text.split()
-    if len(parts) == 2 and "@" in parts[1]:
-        fake = msg
-        fake.text = parts[1]
-        check_email(fake)
-    else:
-        bot.reply_to(msg, "📩 Dùng: /checkmail email@example.com")
-
-# Gửi email trực tiếp
-@bot.message_handler(func=lambda m: "@" in m.text and "." in m.text)
-def check_email(message):
-    email = message.text.strip().lower()
-    chat_id = message.chat.id
-
-    # Chống spam mỗi 30s
+    
+@bot.message_handler(commands=["time"])
+def time_cmd(message):
     now = time.time()
-    if CHECKED_EMAILS.get(chat_id) and now - CHECKED_EMAILS[chat_id] < 30:
-        return
-    CHECKED_EMAILS[chat_id] = now
+    seconds = int(now - START_TIME)
+    days = seconds // (24 * 3600)
+    hours = (seconds % (24 * 3600)) // 3600
+    minutes = (seconds % 3600) // 60
+    sec = seconds % 60
+    bot.reply_to(
+        message,
+        f"⏱️ Bot đã hoạt động được:\n<b>{days} ngày {hours} giờ {minutes} phút {sec} giây</b>",
+        parse_mode="HTML"
+    )
 
-    sync_chat_to_server(message.chat)
+@bot.message_handler(commands=["get4m"])
+def bypass_link4m(message):
+    parts = message.text.split()
+    if len(parts) != 2 or "link4m.com" not in parts[1]:
+        return bot.reply_to(message, "⚠️ Dùng: /get4m https://link4m.com/abcd123")
+
+    short_url = parts[1]
 
     try:
-        msg = bot.reply_to(message, f"<b>⏳ Đang kiểm tra:</b> <code>{email}</code>", parse_mode="HTML")
-    except:
-        msg = None
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
 
-    try:
-        r = requests.get(f"https://haveibeenpwned.com/account/{email}", headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
-        alert = soup.find("div", {"class": "pwnedSummary"})
-        if alert:
-            result = f"⚠️ <b><==> ZProject Check <==></b>\n\n<code>{email}</code> đã bị rò rỉ!\n🔗 https://haveibeenpwned.com/account/{email}"
-        else:
-            result = f"✅ <b><==> ZProject Check <==></b>\n\n<code>{email}</code> chưa từng bị rò rỉ!"
+        s = requests.Session()
+        r = s.get(short_url, headers=headers, allow_redirects=True, timeout=10)
+        final_url = r.url
+
+        if "link4m.com" in final_url:
+            soup = BeautifulSoup(r.text, "html.parser")
+            a_tag = soup.find("a", {"id": "link"})
+            if a_tag and a_tag.get("href"):
+                final_url = a_tag["href"]
+
+        bot.reply_to(message, f"✅ Link gốc:\n<code>{final_url}</code>", parse_mode="HTML")
+
     except Exception as e:
-        result = f"🚫 Lỗi kiểm tra: <code>{e}</code>"
+        bot.reply_to(message, f"🚫 Lỗi vượt link: <code>{e}</code>", parse_mode="HTML")
 
-    if msg:
-        try:
-            bot.edit_message_text(result, msg.chat.id, msg.message_id, parse_mode="HTML")
-        except:
-            bot.send_message(chat_id, result, parse_mode="HTML")
-    else:
-        bot.send_message(chat_id, result, parse_mode="HTML")
-
-# /noti
 @bot.message_handler(commands=["noti"])
 def send_noti(message):
     if message.from_user.id != ADMIN_ID:
@@ -123,7 +116,6 @@ def send_noti(message):
     text = message.text.replace("/noti", "").strip()
     if not text:
         return bot.reply_to(message, "⚠️ Dùng: /noti nội_dung")
-
     notify = f"<b>[!] THÔNG BÁO</b>\n\n{text}"
     ok, fail = 0, 0
     for uid in USER_IDS.union({g["id"] for g in GROUP_INFOS}):
@@ -134,21 +126,19 @@ def send_noti(message):
             fail += 1
     bot.reply_to(message, f"✅ Gửi: {ok} | ❌ Lỗi: {fail}")
 
-# /sever
 @bot.message_handler(commands=["sever"])
 def show_groups(message):
     if message.from_user.id != ADMIN_ID:
         return bot.reply_to(message, "🚫 Không có quyền.")
     if not GROUP_INFOS:
         return bot.reply_to(message, "📭 Chưa có nhóm nào.")
-    text = "<b>📦 Danh sách nhóm:</b>\n\n"
+    text = "<b>📦 All Group Join:</b>\n\n"
     for g in GROUP_INFOS:
         title = g.get("title", "Không rõ")
         link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Chưa có link"
         text += f"📌 <b>{title}</b>\n{link}\n\n"
     bot.reply_to(message, text, parse_mode="HTML", disable_web_page_preview=True)
 
-# Webhook Flask
 @app.route("/")
 def index():
     return "<h3>🛰️ ZProject LeakBot is live!</h3>"
@@ -159,7 +149,6 @@ def webhook():
     bot.process_new_updates([update])
     return "OK", 200
 
-# Khởi động
 if __name__ == "__main__":
     try:
         bot.remove_webhook()
