@@ -52,7 +52,7 @@ retries = Retry(total=5, backoff_factor=1, status_forcelist=[502, 503, 504], all
 adapter = HTTPAdapter(max_retries=retries)
 session.mount("https://", adapter)
 session.mount("http://", adapter) # Thêm cả http nếu có request http
-DEFAULT_TIMEOUT = 15 # Đặt timeout mặc định là 15 giây cho tất cả các request
+DEFAULT_TIMEOUT = 30 # Đặt timeout mặc định là 30 giây cho tất cả các request
 
 # Ghi đè phương thức request để áp dụng timeout mặc định
 class TimeoutSession(requests.Session):
@@ -321,8 +321,9 @@ def spam_ngl_command(message):
 
     try:
         solan = int(solan_str)
-        if not (1 <= solan <= 100):
-            return bot.reply_to(message, "❗ Số lần phải Từ 1 - 100.", parse_mode="HTML")
+        # Giới hạn số lần spam NGL tối đa là 50
+        if not (1 <= solan <= 50):
+            return bot.reply_to(message, "❗ Số lần phải từ 1 đến 50.", parse_mode="HTML")
     except ValueError:
         return bot.reply_to(message, "❗ Số lần phải là một số hợp lệ, không phải ký tự.", parse_mode="HTML")
 
@@ -356,9 +357,15 @@ def spam_ngl_command(message):
             error_message = data.get("message", "Có lỗi xảy ra khi gọi API NGL.")
             bot.reply_to(message, f"❌ Lỗi NGL API: {error_message}", parse_mode="HTML")
 
+    except requests.exceptions.ReadTimeout as e:
+        logging.error(f"Lỗi timeout khi gọi NGL API: {e}")
+        bot.reply_to(message, f"❌ Lỗi timeout: API NGL không phản hồi kịp thời. Vui lòng thử lại sau.", parse_mode="HTML")
+    except requests.exceptions.ConnectionError as e:
+        logging.error(f"Lỗi kết nối khi gọi NGL API: {e}")
+        bot.reply_to(message, f"❌ Lỗi kết nối đến NGL API: Không thể kết nối đến máy chủ. Vui lòng kiểm tra lại sau.", parse_mode="HTML")
     except requests.exceptions.RequestException as e:
-        logging.error(f"Lỗi khi gọi NGL API: {e}")
-        bot.reply_to(message, f"❌ Lỗi kết nối đến NGL API: <code>{e}</code>", parse_mode="HTML")
+        logging.error(f"Lỗi chung khi gọi NGL API: {e}")
+        bot.reply_to(message, f"❌ Lỗi khi gọi NGL API: <code>{e}</code>", parse_mode="HTML")
     except ValueError as e:
         logging.error(f"Lỗi phân tích JSON từ NGL API: {e}")
         bot.reply_to(message, "❌ Lỗi: Phản hồi API không hợp lệ.", parse_mode="HTML")
@@ -703,4 +710,3 @@ if __name__ == "__main__":
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
     except Exception as e:
         logging.critical(f"Lỗi nghiêm trọng khi khởi động bot: {e}")
-
