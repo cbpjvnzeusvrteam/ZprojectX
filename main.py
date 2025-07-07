@@ -31,7 +31,7 @@ logging.basicConfig(
 # === Cấu hình chung ===
 TOKEN = os.environ.get("BOT_TOKEN", "7539540916:AAENFBF2B2dyXLITmEC2ccgLYim2t9vxOQk")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 5819094246))
-APP_URL = "https://zprojec-dev.onrender.com"
+APP_URL = "https://zproject-111.onrender.com"
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
@@ -54,7 +54,7 @@ session.mount("https://", adapter)
 session.mount("http://", adapter)
 
 DEFAULT_TIMEOUT_GLOBAL = 30 # Timeout mặc định cho các request khác
-NGL_REQUEST_TIMEOUT = 30 # Timeout riêng cho NGL (có thể đặt ngắn hơn để bỏ qua nhanh)
+NGL_REQUEST_TIMEOUT = 15 # Timeout riêng cho NGL (có thể đặt ngắn hơn để bỏ qua nhanh)
 
 # Ghi đè phương thức request để áp dụng timeout mặc định, nhưng NGL sẽ dùng timeout riêng
 class TimeoutSession(requests.Session):
