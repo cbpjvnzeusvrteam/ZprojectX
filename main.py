@@ -796,25 +796,12 @@ def webhook():
 # === Khởi chạy Bot ===
 if __name__ == "__main__":
     try:
-        logging.info("Starting bot...")
         webhook_info = bot.get_webhook_info()
         current_webhook_url = f"{APP_URL}/{TOKEN}"
-
-        # Logic để xóa webhook và đặt lại nếu cần, và quan trọng là DROP PENDING UPDATES
-        if webhook_info.url != current_webhook_url or webhook_info.pending_update_count > 0:
-            logging.info(f"Removing old webhook: {webhook_info.url} with {webhook_info.pending_update_count} pending updates.")
-            # Xóa webhook cũ và bỏ qua tất cả các updates đang chờ xử lý
-            bot.remove_webhook(drop_pending_updates=True)
-            logging.info("Old webhook removed and pending updates dropped.")
-
-            # Đặt lại webhook mới
+        if webhook_info.url != current_webhook_url:
+            bot.remove_webhook()
             bot.set_webhook(url=current_webhook_url)
-            logging.info(f"New webhook set to: {current_webhook_url}")
-        else:
-            logging.info(f"Webhook already set and no pending updates: {current_webhook_url}")
-
-        # Chạy ứng dụng Flask
+            logging.info(f"Webhook đã được đặt tới: {current_webhook_url}")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-
     except Exception as e:
         logging.critical(f"Lỗi nghiêm trọng khi khởi động bot: {e}")
