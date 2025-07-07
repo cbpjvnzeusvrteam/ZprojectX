@@ -551,6 +551,58 @@ def show_groups(message):
         text += f"📌 <b>{title}</b>\n{link}\n\n"
     send_message_robustly(message.chat.id, text=text, parse_mode="HTML", disable_web_page_preview=True, reply_to_message_id=message.message_id)
 
+
+# Hàm mới để định dạng đầu ra AI
+def format_ai_response(text):
+    """
+    Phân tích văn bản từ AI, tách code block và văn bản thông thường,
+    sau đó định dạng chúng với HTML cho Telegram.
+    Tạo nút "Copy Code" cho mỗi block code.
+    """
+    parts = []
+    # Regex để tìm kiếm các block code Markdown (```language\ncode\n```)
+    # Tên ngôn ngữ (nếu có) được bắt bởi group 1, code bởi group 2
+    code_blocks = re.split(r"```(?:\w+)?\n(.*?)```", text, flags=re.DOTALL)
+
+    is_code = False
+    for i, part in enumerate(code_blocks):
+        if i % 2 == 0:  # Phần văn bản
+            if part:
+                parts.append({"type": "text", "content": format_html(part.strip())})
+        else:  # Phần code (group 1 của regex)
+            if part:
+                # Tạo một ID duy nhất cho nút copy
+                copy_id = uuid.uuid4().hex[:8]
+                bot.code_snippets = getattr(bot, "code_snippets", {})
+                bot.code_snippets[copy_id] = part.strip() # Lưu nội dung code vào map
+                
+                # Markup cho nút copy
+                copy_markup = InlineKeyboardMarkup()
+                copy_markup.add(InlineKeyboardButton("📄 Sao chép Code", callback_data=f"copycode|{copy_id}"))
+
+                parts.append({"type": "code", "content": format_html(part.strip()), "markup": copy_markup})
+    return parts
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("copycode|"))
+def copy_code_button(call):
+    """Xử lý nút 'Copy Code'."""
+    try:
+        _, code_id = call.data.split("|", 1)
+        code_content = bot.code_snippets.get(code_id)
+
+        if code_content:
+            bot.answer_callback_query(call.id, text="Đã sao chép nội dung code!", show_alert=True)
+            # Telegram không cho phép bot tự động copy vào clipboard của người dùng.
+            # `answer_callback_query` với `show_alert=True` là cách tốt nhất để xác nhận.
+            # Người dùng sẽ phải tự chọn và copy đoạn code trong tin nhắn.
+        else:
+            bot.answer_callback_query(call.id, text="Lỗi: Không tìm thấy nội dung code này.", show_alert=True)
+    except Exception as e:
+        logging.error(f"Lỗi khi xử lý nút copy code: {e}")
+        bot.answer_callback_query(call.id, text="Đã xảy ra lỗi khi sao chép code.", show_alert=True)
+
+
 @bot.message_handler(commands=["ask"])
 @increment_interaction_count
 def ask_command(message):
@@ -580,6 +632,7 @@ def ask_command(message):
 
     history_block = ""
     if memory:
+        # Lấy 5 cặp hỏi-đáp gần nhất để làm ngữ cảnh
         for item in memory[-5:]:
             history_block += f"Người dùng hỏi: {item['question']}\nAI: {item['answer']}\n"
 
@@ -649,36 +702,43 @@ def ask_command(message):
     except Exception as e:
         logging.error(f"Lỗi gửi log từ xa: {e}")
 
-    formatted_result = format_html(result)
-
+    # --- Xử lý định dạng và gửi tin nhắn ---
+    response_parts = format_ai_response(result)
     reply_id = uuid.uuid4().hex[:6]
-    markup = build_reply_button(user_id, prompt, reply_id)
-
+    main_markup = build_reply_button(user_id, prompt, reply_id)
     bot.voice_map = getattr(bot, "voice_map", {})
-    bot.voice_map[reply_id] = result
+    bot.voice_map[reply_id] = result # Lưu toàn bộ kết quả gốc cho TTS
 
-    if len(formatted_result) > 4000:
-        filename = f"zproject_{reply_id}.html"
+    combined_text_length = sum(len(part["content"]) for part in response_parts if part["type"] == "text") + \
+                           sum(len(part["content"]) for part in response_parts if part["type"] == "code")
+
+    if combined_text_length > 4000: # Giới hạn 4096 ký tự của Telegram, trừ hao còn 4000
+        filename = f"zproject_{reply_id}.txt" # Đổi thành .txt hoặc .md
         with open(filename, "w", encoding="utf-8") as f:
-            f.write(f"<html><head><meta charset='utf-8'></head><body>{formatted_result}</body></html>")
+            for part in response_parts:
+                if part["type"] == "text":
+                    f.write(part["content"].replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").replace("&quot;", "\"").replace("&#039;", "'")) # Undo HTML escaping for file
+                elif part["type"] == "code":
+                    f.write("\n```\n")
+                    f.write(part["content"].replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").replace("&quot;", "\"").replace("&#039;", "'")) # Undo HTML escaping for file
+                    f.write("\n```\n")
+            
         with open(filename, "rb") as f:
             try:
-                # Gửi file HTML, cố gắng reply
                 bot.send_document(
                     message.chat.id,
                     f,
-                    caption="📄 Trả lời dài quá, đây là file HTML nha!",
+                    caption=f"📄 Trả lời quá dài! Mình đã đóng gói vào file <code>{filename}</code> nha {message.from_user.first_name}!",
                     parse_mode="HTML",
                     reply_to_message_id=message.message_id
                 )
             except telebot.apihelper.ApiTelegramException as e:
                 logging.warning(f"Failed to send document replying to message {message.message_id}: {e}. Sending without reply_to.")
-                # Gửi file HTML mà không reply nếu lỗi
-                f.seek(0) # Reset con trỏ file sau khi đọc lần đầu
+                f.seek(0)
                 bot.send_document(
                     message.chat.id,
                     f,
-                    caption="📄 Trả lời dài quá, đây là file HTML nha!",
+                    caption=f"📄 Trả lời quá dài! Mình đã đóng gói vào file <code>{filename}</code> nha {message.from_user.first_name}!",
                     parse_mode="HTML"
                 )
         os.remove(filename)
@@ -687,26 +747,121 @@ def ask_command(message):
             bot.delete_message(msg_status.chat.id, msg_status.message_id)
         except telebot.apihelper.ApiTelegramException as e:
             logging.warning(f"Failed to delete status message {msg_status.message_id}: {e}")
-    else:
-        try:
-            # Cập nhật tin nhắn "đang xử lý" với kết quả
-            bot.edit_message_text(
-                f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n<b>{formatted_result}</b>",
-                msg_status.chat.id,
-                msg_status.message_id,
-                parse_mode="HTML",
-                reply_markup=markup
-            )
-        except telebot.apihelper.ApiTelegramException as edit_e:
-            logging.warning(f"Failed to edit message {msg_status.message_id}: {edit_e}. Sending new message.")
-            # Gửi tin nhắn mới nếu không thể edit (do tin nhắn gốc bị xóa)
-            send_message_robustly(
-                message.chat.id,
-                text=f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n<b>{formatted_result}</b>",
-                parse_mode="HTML",
-                reply_markup=markup
-            )
 
+    else:
+        # Gửi từng phần riêng biệt nếu có nhiều code block, hoặc gửi một tin nhắn duy nhất
+        current_message_text = f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n"
+        current_markup = InlineKeyboardMarkup()
+        
+        # Thêm các nút chung vào markup chính (Trả lời lại, Voice)
+        if main_markup.keyboard:
+            for row in main_markup.keyboard:
+                current_markup.row(*row)
+
+        sent_messages = [] # Để lưu các message_id nếu phải gửi nhiều tin nhắn
+
+        for i, part in enumerate(response_parts):
+            if part["type"] == "text":
+                current_message_text += part["content"]
+            elif part["type"] == "code":
+                # Khi gặp code block, gửi đoạn văn bản hiện tại (nếu có)
+                if current_message_text.strip() != f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n":
+                    try:
+                        sent_msg = bot.send_message(
+                            message.chat.id,
+                            text=current_message_text,
+                            parse_mode="HTML",
+                            reply_markup=current_markup if not sent_messages else None, # Chỉ thêm markup vào tin nhắn đầu tiên hoặc nếu là tin nhắn duy nhất
+                            reply_to_message_id=message.message_id if not sent_messages else None # Reply to original message only for the first part
+                        )
+                        sent_messages.append(sent_msg.message_id)
+                    except telebot.apihelper.ApiTelegramException as e:
+                        logging.warning(f"Failed to send text part {i} in chat {message.chat.id}: {e}. Sending without reply_to.")
+                        sent_msg = bot.send_message(
+                            message.chat.id,
+                            text=current_message_text,
+                            parse_mode="HTML",
+                            reply_markup=current_markup if not sent_messages else None # Chỉ thêm markup vào tin nhắn đầu tiên hoặc nếu là tin nhắn duy nhất
+                        )
+                        sent_messages.append(sent_msg.message_id)
+
+
+                # Gửi code block riêng
+                code_text = f"```\n{part['content']}\n```"
+                try:
+                    sent_code_msg = bot.send_message(
+                        message.chat.id,
+                        text=f"<b>Code:</b>\n{code_text}",
+                        parse_mode="HTML",
+                        reply_markup=part["markup"], # Markup riêng cho nút copy code
+                        reply_to_message_id=message.message_id if not sent_messages else None # Reply to original message only for the first code part if no text sent yet
+                    )
+                    sent_messages.append(sent_code_msg.message_id)
+                except telebot.apihelper.ApiTelegramException as e:
+                    logging.warning(f"Failed to send code part {i} in chat {message.chat.id}: {e}. Sending without reply_to.")
+                    sent_code_msg = bot.send_message(
+                        message.chat.id,
+                        text=f"<b>Code:</b>\n{code_text}",
+                        parse_mode="HTML",
+                        reply_markup=part["markup"] # Markup riêng cho nút copy code
+                    )
+                    sent_messages.append(sent_code_msg.message_id)
+
+
+                # Reset current_message_text cho phần tiếp theo
+                current_message_text = ""
+
+        # Gửi phần văn bản cuối cùng nếu còn
+        if current_message_text.strip() != f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n":
+            try:
+                # Nếu chỉ có một tin nhắn duy nhất được gửi, thì đó là msg_status được edit.
+                # Nếu đã gửi nhiều tin, thì đây là tin nhắn cuối cùng mới.
+                if not sent_messages: # Chỉ có một tin nhắn duy nhất (chỉ toàn văn bản, hoặc văn bản kèm code nhưng không vượt quá 4000)
+                    bot.edit_message_text(
+                        current_message_text,
+                        msg_status.chat.id,
+                        msg_status.message_id,
+                        parse_mode="HTML",
+                        reply_markup=current_markup
+                    )
+                else: # Đã gửi nhiều tin nhắn, đây là phần cuối cùng được gửi như một tin nhắn mới
+                     bot.send_message(
+                        message.chat.id,
+                        text=current_message_text,
+                        parse_mode="HTML",
+                        reply_markup=current_markup # Markup chung sẽ được đính kèm vào tin nhắn cuối cùng này
+                    )
+            except telebot.apihelper.ApiTelegramException as edit_e:
+                logging.warning(f"Failed to edit message {msg_status.message_id} with final text: {edit_e}. Sending new message instead.")
+                send_message_robustly(
+                    message.chat.id,
+                    text=current_message_text,
+                    parse_mode="HTML",
+                    reply_markup=current_markup
+                )
+        else: # Nếu không còn văn bản sau khi gửi code blocks, và đã có tin nhắn được gửi (sent_messages không rỗng), thì chỉ cần xóa tin trạng thái ban đầu.
+            if sent_messages:
+                try:
+                    bot.delete_message(msg_status.chat.id, msg_status.message_id)
+                except telebot.apihelper.ApiTelegramException as e:
+                    logging.warning(f"Failed to delete status message {msg_status.message_id}: {e}")
+            else: # Trường hợp đặc biệt: AI trả về rỗng hoặc chỉ có khoảng trắng
+                try:
+                    bot.edit_message_text(
+                        f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n<b>Không có nội dung phản hồi từ AI.</b>",
+                        msg_status.chat.id,
+                        msg_status.message_id,
+                        parse_mode="HTML",
+                        reply_markup=main_markup
+                    )
+                except telebot.apihelper.ApiTelegramException as edit_e:
+                    logging.warning(f"Failed to edit message {msg_status.message_id} with 'no content' msg: {edit_e}. Sending new message.")
+                    send_message_robustly(
+                        message.chat.id,
+                        text=f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n<b>Không có nội dung phản hồi từ AI.</b>",
+                        parse_mode="HTML",
+                        reply_markup=main_markup
+                    )
 
 # --- NÚT CALLBACK ---
 
@@ -724,16 +879,16 @@ def retry_button(call):
             message_id=call.message.message_id,
             text="/ask " + question,
             from_user=call.from_user,
-            reply_to_message=None
+            reply_to_message=None # Giả định không có reply_to_message khi retry
         )
 
         bot.answer_callback_query(call.id, "🔁 Đang thử lại câu hỏi...")
         # Cập nhật tin nhắn ban đầu thành "🤖" để cho thấy đang xử lý
         try:
-            bot.edit_message_text("🤖", call.message.chat.id, call.message.message_id)
+            bot.edit_message_text("🤖 Đang xử lý lại...", call.message.chat.id, call.message.message_id)
         except telebot.apihelper.ApiTelegramException as e:
             logging.warning(f"Failed to edit message {call.message.message_id} on retry: {e}. Sending new 'thinking' message.")
-            bot.send_message(call.message.chat.id, "🤖") # Send new message if edit fails
+            bot.send_message(call.message.chat.id, "🤖 Đang xử lý lại...") # Send new message if edit fails
 
         ask_command(msg)
     except Exception as e:
@@ -762,6 +917,9 @@ def tts_button(call):
         if not text_to_speak or len(text_to_speak) < 5:
             return bot.answer_callback_query(call.id, "❗ Nội dung quá ngắn hoặc rỗng để chuyển voice.", show_alert=True)
 
+        # Xóa các ký tự không được hỗ trợ bởi gTTS (ví dụ: dấu nháy kép bên ngoài)
+        text_to_speak = text_to_speak.replace('"', '').replace("'", '')
+        
         filename = f"zproject_tts_{reply_id}.mp3"
         tts = gTTS(text=text_to_speak, lang="vi", slow=False)
         tts.save(filename)
@@ -808,4 +966,3 @@ if __name__ == "__main__":
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
     except Exception as e:
         logging.critical(f"Lỗi nghiêm trọng khi khởi động bot: {e}")
-
