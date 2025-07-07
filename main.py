@@ -40,8 +40,8 @@ START_TIME = time.time()
 USER_IDS = set()
 GROUP_INFOS = []
 # Từ điển để lưu trữ thông tin phản hồi của người dùng (feedback_message_id: original_chat_id)
+# Điều này cần thiết để admin có thể reply và bot biết gửi về đâu
 bot.feedback_messages = {}
-bot.voice_map = {}
 
 # Biến toàn cục để đếm số lượt tương tác
 interaction_count = 0
@@ -53,12 +53,13 @@ adapter = HTTPAdapter(max_retries=retries)
 session.mount("https://", adapter)
 session.mount("http://", adapter)
 
-DEFAULT_TIMEOUT_GLOBAL = 30  # Timeout mặc định cho các request khác
-NGL_REQUEST_TIMEOUT = 15  # Timeout riêng cho NGL
+DEFAULT_TIMEOUT_GLOBAL = 30 # Timeout mặc định cho các request khác
+NGL_REQUEST_TIMEOUT = 15 # Timeout riêng cho NGL (có thể đặt ngắn hơn để bỏ qua nhanh)
 
 # Ghi đè phương thức request để áp dụng timeout mặc định, nhưng NGL sẽ dùng timeout riêng
 class TimeoutSession(requests.Session):
     def request(self, method, url, **kwargs):
+        # Apply NGL_REQUEST_TIMEOUT if it's an NGL URL, otherwise use DEFAULT_TIMEOUT_GLOBAL
         if "zeusvr.x10.mx/ngl" in url:
             kwargs.setdefault('timeout', NGL_REQUEST_TIMEOUT)
         else:
@@ -77,22 +78,25 @@ REMOTE_LOG_HOST = "https://zcode.x10.mx/save.php"
 
 # --- URL ảnh dùng trong bot ---
 NGL_SUCCESS_IMAGE_URL = "https://i.ibb.co/fV1srXJ8/9885878c-2a4b-4246-ae2e-fda17d735e2d.jpg"
+# URL ảnh cho lệnh /start
 START_IMAGE_URL = "https://i.ibb.co/MkQ2pTjv/ca68c4b2-60dc-4eb1-9a20-ebf2cc5c557f.jpg"
-NOTI_IMAGE_URL = "https://i.ibb.co/QvrB4zMB/ca68c4b2-2a4b-4246-ae2e-fda17d735e2d.jpg"  # URL ảnh cho thông báo mặc định
-TUONGTAC_IMAGE_URL = "https://i.ibb.co/YF4yRCBP/1751301092916.png"  # URL ảnh cho lệnh /tuongtac
+NOTI_IMAGE_URL = "https://i.ibb.co/QvrB4zMB/ca68c4b2-2a4b-4246-ae2e-fda17d735e2d.jpg" # URL ảnh cho thông báo mặc định
+TUONGTAC_IMAGE_URL = "https://i.ibb.co/YF4yRCBP/1751301092916.png" # URL ảnh cho lệnh /tuongtac
 
-# --- Các hàm Dummy ---
+# --- Các hàm Dummy (Cần thay thế bằng logic thực tế của bạn) ---
 def load_user_memory(user_id):
     """Tải lịch sử trò chuyện của người dùng."""
+    # Đây là hàm dummy, hãy thay thế bằng logic tải dữ liệu thực tế
     return []
 
 def save_user_memory(user_id, memory):
     """Lưu lịch sử trò chuyện của người dùng."""
+    # Đây là hàm dummy, hãy thay thế bằng logic lưu dữ liệu thực tế
     pass
 
 def format_html(text):
     """Định dạng văn bản thành HTML, tránh lỗi ký tự đặc biệt."""
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#039;")
 
 class gTTS:
     """Class dummy cho gTTS."""
@@ -101,8 +105,10 @@ class gTTS:
         self.lang = lang
         self.slow = slow
     def save(self, filename):
+        # Logic lưu file âm thanh dummy
         with open(filename, "wb") as f:
             f.write(b"dummy_audio_data")
+
 
 # === Đồng bộ nhóm/người dùng từ API ===
 def sync_chat_to_server(chat):
@@ -138,11 +144,12 @@ def update_id_list_loop():
                 logging.info("Updated user and group lists")
         except Exception as e:
             logging.error(f"Error updating lists: {e}")
-        time.sleep(30)
+        time.sleep(30) # Đợi 30 giây trước khi cập nhật lại
 
+# Khởi chạy luồng cập nhật ID
 Thread(target=update_id_list_loop, daemon=True).start()
 
-# --- Hàm hỗ trợ ---
+# --- Hàm hỗ trợ cho /ask và callbacks ---
 def build_reply_button(user_id, question, reply_id=None):
     """Tạo các nút phản hồi cho tin nhắn /ask."""
     safe_q = re.sub(r"[^\w\s]", "", question.strip())[:50]
@@ -153,6 +160,7 @@ def build_reply_button(user_id, question, reply_id=None):
     )
     return markup
 
+# Decorator để tăng interaction_count cho mỗi lệnh
 def increment_interaction_count(func):
     def wrapper(message, *args, **kwargs):
         global interaction_count
@@ -160,19 +168,10 @@ def increment_interaction_count(func):
         return func(message, *args, **kwargs)
     return wrapper
 
-# Hàm gửi tin nhắn đã được sửa
-def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_markup=None, parse_mode="HTML", reply_to_message_id=None):
+# Hàm gửi tin nhắn có xử lý lỗi reply_to_message_id
+def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_markup=None, parse_mode="HTML", reply_to_message_id=None, disable_web_page_preview=None):
     try:
-        if photo and caption:
-            return bot.send_photo(
-                chat_id=chat_id,
-                photo=photo,
-                caption=caption,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode,
-                reply_to_message_id=reply_to_message_id
-            )
-        elif photo:
+        if photo:
             return bot.send_photo(
                 chat_id=chat_id,
                 photo=photo,
@@ -187,20 +186,14 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
                 text=text,
                 reply_markup=reply_markup,
                 parse_mode=parse_mode,
-                reply_to_message_id=reply_to_message_id
+                reply_to_message_id=reply_to_message_id,
+                disable_web_page_preview=disable_web_page_preview # Pass the argument here
             )
     except telebot.apihelper.ApiTelegramException as e:
         if "message to be replied not found" in str(e):
             logging.warning(f"Failed to reply to message {reply_to_message_id} in chat {chat_id}: {e}. Sending as new message.")
-            if photo and caption:
-                return bot.send_photo(
-                    chat_id=chat_id,
-                    photo=photo,
-                    caption=caption,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode
-                )
-            elif photo:
+            # Thử gửi lại mà không reply_to_message_id
+            if photo:
                 return bot.send_photo(
                     chat_id=chat_id,
                     photo=photo,
@@ -213,17 +206,19 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
                     chat_id=chat_id,
                     text=text,
                     reply_markup=reply_markup,
-                    parse_mode=parse_mode
+                    parse_mode=parse_mode,
+                    disable_web_page_preview=disable_web_page_preview # Pass the argument here
                 )
         else:
             logging.error(f"Error sending message to chat {chat_id}: {e}")
-            raise
+            raise # Re-raise other API exceptions
 
 # === LỆNH XỬ LÝ TIN NHẮN ===
 
 @bot.message_handler(commands=["start"])
 @increment_interaction_count
 def start_cmd(message):
+    """Xử lý lệnh /start, hiển thị thông tin bot và các liên kết."""
     sync_chat_to_server(message.chat)
     markup = InlineKeyboardMarkup()
     markup.add(
@@ -246,15 +241,16 @@ def start_cmd(message):
 @bot.message_handler(commands=["help"])
 @increment_interaction_count
 def help_command(message):
+    """Xử lý lệnh /help, hiển thị menu các lệnh."""
     sync_chat_to_server(message.chat)
     help_text = (
         "<b>📚 Menu Lệnh ZProject Bot</b>\n\n"
         "•  <code>/start</code> - Start Zproject Bot.\n"
         "•  <code>/help</code>  - Show Menu Zproject Bot.\n"
         "•  <code>/time</code>  - Uptime Zproject Bot.\n"
-        "•  <code>/ask <câu hỏi></code> - Hỏi AI Được Tích Hợp WormGpt V2.\n"
-        "•  <code>/ngl <username> <tin_nhắn> <số_lần></code> - Spam Ngl.\n"
-        "•  <code>/noti <nội dung></code> - <i>(Chỉ Admin)</i> Gửi thông báo.\n"
+        "•  <code>/ask &lt;câu hỏi&gt;</code> - Hỏi AI Được Tích Hợp WormGpt V2.\n"
+        "•  <code>/ngl &lt;username&gt; &lt;tin_nhắn&gt; &lt;số_lần&gt;</code> - Spam Ngl.\n"
+        "•  <code>/noti &lt;nội dung&gt;</code> - <i>(Chỉ Admin)</i> Gửi thông báo.\n"
         "•  <code>/sever</code> - <i>(Chỉ Admin)</i> Sever Bot.\n"
         "•  <code>/tuongtac</code> - Xem tổng số lượt tương tác của bot.\n"
         "•  <code>/phanhoi</code> - Gửi Phản Hồi Lỗi Hoặc Chức Năng Cần Cải Tiến."
@@ -270,6 +266,7 @@ def help_command(message):
 @bot.message_handler(commands=["time"])
 @increment_interaction_count
 def time_cmd(message):
+    """Xử lý lệnh /time, hiển thị thời gian hoạt động của bot."""
     sync_chat_to_server(message.chat)
     now = time.time()
     seconds = int(now - START_TIME)
@@ -277,6 +274,7 @@ def time_cmd(message):
     hours = (seconds % 86400) // 3600
     minutes = (seconds % 3600) // 60
     sec = seconds % 60
+    # Sử dụng send_message_robustly
     send_message_robustly(
         message.chat.id,
         text=f"<blockquote>⏱️ Bot đã hoạt động được:\n<b>{days} ngày {hours} giờ {minutes} phút {sec} giây</b></blockquote>",
@@ -287,13 +285,16 @@ def time_cmd(message):
 @bot.message_handler(commands=["tuongtac"])
 @increment_interaction_count
 def tuongtac_command(message):
+    """Xử lý lệnh /tuongtac, hiển thị tổng số lượt tương tác của bot."""
     sync_chat_to_server(message.chat)
+    
     reply_text = (
         f"<b>📊 THỐNG KÊ ZPROJECT BOT</b>\n\n"
         f"● Tổng Thống Kê Zproject Bot.\n\n"
         f"<b>Tổng số lượt tương tác:</b> <code>{interaction_count}</code>\n"
         f"<i>Lưu ý: Số Lượt Tương Tác Càng Cao Chứng Tỏ Độ Uy Tín Của Bot 🎉.</i>"
     )
+    
     send_message_robustly(
         chat_id=message.chat.id,
         photo=TUONGTAC_IMAGE_URL,
@@ -307,19 +308,18 @@ def tuongtac_command(message):
 def send_noti(message):
     """Xử lý lệnh /noti, cho phép Admin gửi thông báo kèm ảnh (tùy chọn) tới tất cả người dùng/nhóm."""
     if message.from_user.id != ADMIN_ID:
+        # Sử dụng send_message_robustly
         return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
     text = message.text.replace("/noti", "").strip()
-    photo_file_id = None
 
-    # Kiểm tra nếu reply vào ảnh
+    photo_file_id = None
     if message.reply_to_message and message.reply_to_message.photo:
         photo_file_id = message.reply_to_message.photo[-1].file_id
-        if not text:
-            text = "Thông báo từ Admin với ảnh đính kèm."
 
     if not text and not photo_file_id:
-        return send_message_robustly(message.chat.id, text="⚠️ Sử dụng: <code>/noti <nội dung></code> hoặc reply vào ảnh và dùng <code>/noti <nội dung></code>.", parse_mode="HTML", reply_to_message_id=message.message_id)
+        # Sử dụng send_message_robustly
+        return send_message_robustly(message.chat.id, text="⚠️ Sử dụng: <code>/noti &lt;nội dung&gt;</code> hoặc reply vào ảnh và dùng <code>/noti &lt;nội dung&gt;</code>.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
     notify_caption = f"<b>[!] THÔNG BÁO TỪ ADMIN DEPZAI CUTO</b>\n\n{text}" if text else "<b>[!] THÔNG BÁO</b>"
 
@@ -331,17 +331,18 @@ def send_noti(message):
     for uid in all_recipients:
         try:
             if photo_file_id:
-                bot.send_photo(
+                bot.send_photo( # Không dùng send_message_robustly ở đây vì đây là gửi thông báo mới, không phải reply
                     chat_id=uid,
                     photo=photo_file_id,
                     caption=notify_caption,
                     parse_mode="HTML"
                 )
             else:
-                bot.send_message(
+                bot.send_message( # Không dùng send_message_robustly ở đây vì đây là gửi thông báo mới, không phải reply
                     chat_id=uid,
                     text=notify_caption,
-                    parse_mode="HTML"
+                    parse_mode="HTML",
+                    disable_web_page_preview=True # Added this for notifications
                 )
             ok += 1
             time.sleep(0.1)
@@ -350,6 +351,7 @@ def send_noti(message):
             failed_ids.append(uid)
             logging.error(f"Failed to send notification to {uid}: {e}")
 
+    # Sử dụng send_message_robustly
     send_message_robustly(
         message.chat.id,
         text=f"✅ Gửi thành công: {ok} tin nhắn.\n❌ Gửi thất bại: {fail} tin nhắn.\n"
@@ -361,11 +363,15 @@ def send_noti(message):
 @bot.message_handler(commands=["ngl"])
 @increment_interaction_count
 def spam_ngl_command(message):
+    """Xử lý lệnh /ngl để gửi tin nhắn ẩn danh tới NGL.
+       Khi lỗi, sẽ bỏ qua lệnh này cho người dùng hiện tại và đợi lệnh mới."""
     sync_chat_to_server(message.chat)
+
     args = message.text.split(maxsplit=3)
 
     if len(args) < 4:
-        return send_message_robustly(message.chat.id, text="⚠️ Sử dụng: <code>/ngl <username> <tin_nhan> <số_lần></code>", parse_mode="HTML", reply_to_message_id=message.message_id)
+        # Sử dụng send_message_robustly
+        return send_message_robustly(message.chat.id, text="⚠️ Sử dụng: <code>/ngl &lt;username&gt; &lt;tin_nhan&gt; &lt;số_lần&gt;</code>", parse_mode="HTML", reply_to_message_id=message.message_id)
 
     username = args[1]
     tinnhan = args[2]
@@ -374,14 +380,16 @@ def spam_ngl_command(message):
     try:
         solan = int(solan_str)
         if not (1 <= solan <= 50):
+            # Sử dụng send_message_robustly
             return send_message_robustly(message.chat.id, text="❗ Số lần phải từ 1 đến 50.", parse_mode="HTML", reply_to_message_id=message.message_id)
     except ValueError:
+        # Sử dụng send_message_robustly
         return send_message_robustly(message.chat.id, text="❗ Số lần phải là một số hợp lệ, không phải ký tự.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
     ngl_api_url = f"https://zeusvr.x10.mx/ngl?api-key=dcbfree&username={username}&tinnhan={tinnhan}&solan={solan}"
 
     try:
-        response = session.get(ngl_api_url)
+        response = session.get(ngl_api_url) 
         response.raise_for_status()
         data = response.json()
 
@@ -427,6 +435,7 @@ def spam_ngl_command(message):
 @bot.message_handler(commands=["phanhoi"])
 @increment_interaction_count
 def send_feedback_to_admin(message):
+    """Xử lý lệnh /phanhoi, cho phép người dùng gửi phản hồi đến admin."""
     sync_chat_to_server(message.chat)
     feedback_text = message.text.replace("/phanhoi", "").strip()
 
@@ -453,11 +462,11 @@ def send_feedback_to_admin(message):
         f"<b>Thông tin Chat:</b>\n{chat_info_for_admin}\n"
         f"<b>Thời gian:</b> <code>{timestamp}</code>\n\n"
         f"<b>Nội dung phản hồi:</b>\n<blockquote>{format_html(feedback_text)}</blockquote>\n\n"
-        f"<i>Để phản hồi lại người dùng này, hãy reply tin nhắn này và dùng lệnh <code>/adminph <nội dung phản hồi></code></i>"
+        f"<i>Để phản hồi lại người dùng này, hãy reply tin nhắn này và dùng lệnh <code>/adminph &lt;nội dung phản hồi&gt;</code></i>"
     )
 
     try:
-        sent_message_to_admin = bot.send_message(
+        sent_message_to_admin = bot.send_message( # Admin ID luôn nhận tin nhắn mới
             chat_id=ADMIN_ID,
             text=admin_notification,
             parse_mode="HTML",
@@ -469,6 +478,7 @@ def send_feedback_to_admin(message):
             'user_first_name': message.from_user.first_name,
             'feedback_text': feedback_text
         }
+        
         send_message_robustly(message.chat.id, text="✅ Cảm ơn bạn đã gửi phản hồi! Admin sẽ xem xét sớm nhất có thể.", parse_mode="HTML", reply_to_message_id=message.message_id)
     except Exception as e:
         logging.error(f"Lỗi khi gửi phản hồi đến admin: {e}")
@@ -477,6 +487,7 @@ def send_feedback_to_admin(message):
 @bot.message_handler(commands=["adminph"])
 @increment_interaction_count
 def admin_reply_to_feedback(message):
+    """Xử lý lệnh /adminph, cho phép admin phản hồi lại người dùng đã gửi feedback."""
     if message.from_user.id != ADMIN_ID:
         return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
@@ -511,6 +522,9 @@ def admin_reply_to_feedback(message):
     )
 
     try:
+        # Gửi phản hồi admin cho người dùng
+        # Ở đây, không dùng reply_to_message_id trực tiếp vì tin nhắn gốc có thể không phải là tin nhắn phản hồi của người dùng.
+        # Gửi như một tin nhắn mới trong chat của người dùng.
         bot.send_message(
             chat_id=user_chat_id,
             text=admin_reply_to_user,
@@ -525,6 +539,7 @@ def admin_reply_to_feedback(message):
 @bot.message_handler(commands=["sever"])
 @increment_interaction_count
 def show_groups(message):
+    """Xử lý lệnh /sever, hiển thị danh sách các nhóm bot đang tham gia (chỉ Admin)."""
     if message.from_user.id != ADMIN_ID:
         return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
     if not GROUP_INFOS:
@@ -539,16 +554,18 @@ def show_groups(message):
 @bot.message_handler(commands=["ask"])
 @increment_interaction_count
 def ask_command(message):
+    """Xử lý lệnh /ask để gửi câu hỏi đến Gemini AI. Hỗ trợ hỏi kèm ảnh."""
     sync_chat_to_server(message.chat)
     prompt = message.text.replace("/ask", "").strip()
     if not prompt:
-        return send_message_robustly(message.chat.id, text="❓ Bạn chưa nhập câu hỏi rồi đó! Vui lòng gõ <code>/ask <câu hỏi của bạn></code>.", parse_mode="HTML", reply_to_message_id=message.message_id)
+        return send_message_robustly(message.chat.id, text="❓ Bạn chưa nhập câu hỏi rồi đó! Vui lòng gõ <code>/ask &lt;câu hỏi của bạn&gt;</code>.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
+    # Gửi tin nhắn "đang xử lý" ban đầu
     try:
         msg_status = bot.send_message(message.chat.id, "🤖", reply_to_message_id=message.message_id)
     except telebot.apihelper.ApiTelegramException as e:
         logging.warning(f"Failed to send initial 'thinking' message in chat {message.chat.id}: {e}. Proceeding without reply_to.")
-        msg_status = bot.send_message(message.chat.id, "🤖")
+        msg_status = bot.send_message(message.chat.id, "🤖") # Gửi mà không reply_to nếu lỗi
 
     user_id = message.from_user.id
     user_name = message.from_user.first_name
@@ -599,6 +616,7 @@ def ask_command(message):
         res.raise_for_status()
         result = res.json()["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
+        # Cập nhật tin nhắn trạng thái nếu có thể, hoặc gửi tin nhắn mới
         try:
             bot.edit_message_text(
                 f"❌ Đã xảy ra lỗi khi gọi API Gemini:\n<pre>{e}</pre>",
@@ -636,6 +654,7 @@ def ask_command(message):
     reply_id = uuid.uuid4().hex[:6]
     markup = build_reply_button(user_id, prompt, reply_id)
 
+    bot.voice_map = getattr(bot, "voice_map", {})
     bot.voice_map[reply_id] = result
 
     if len(formatted_result) > 4000:
@@ -644,6 +663,7 @@ def ask_command(message):
             f.write(f"<html><head><meta charset='utf-8'></head><body>{formatted_result}</body></html>")
         with open(filename, "rb") as f:
             try:
+                # Gửi file HTML, cố gắng reply
                 bot.send_document(
                     message.chat.id,
                     f,
@@ -653,7 +673,8 @@ def ask_command(message):
                 )
             except telebot.apihelper.ApiTelegramException as e:
                 logging.warning(f"Failed to send document replying to message {message.message_id}: {e}. Sending without reply_to.")
-                f.seek(0)
+                # Gửi file HTML mà không reply nếu lỗi
+                f.seek(0) # Reset con trỏ file sau khi đọc lần đầu
                 bot.send_document(
                     message.chat.id,
                     f,
@@ -661,12 +682,14 @@ def ask_command(message):
                     parse_mode="HTML"
                 )
         os.remove(filename)
+        # Xóa tin nhắn "đang xử lý" ban đầu
         try:
             bot.delete_message(msg_status.chat.id, msg_status.message_id)
         except telebot.apihelper.ApiTelegramException as e:
             logging.warning(f"Failed to delete status message {msg_status.message_id}: {e}")
     else:
         try:
+            # Cập nhật tin nhắn "đang xử lý" với kết quả
             bot.edit_message_text(
                 f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n<b>{formatted_result}</b>",
                 msg_status.chat.id,
@@ -676,6 +699,7 @@ def ask_command(message):
             )
         except telebot.apihelper.ApiTelegramException as edit_e:
             logging.warning(f"Failed to edit message {msg_status.message_id}: {edit_e}. Sending new message.")
+            # Gửi tin nhắn mới nếu không thể edit (do tin nhắn gốc bị xóa)
             send_message_robustly(
                 message.chat.id,
                 text=f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n<b>{formatted_result}</b>",
@@ -683,15 +707,18 @@ def ask_command(message):
                 reply_markup=markup
             )
 
+
 # --- NÚT CALLBACK ---
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("retry|"))
 def retry_button(call):
+    """Xử lý nút 'Trả lời lại' từ câu hỏi /ask."""
     try:
         _, uid, question = call.data.split("|", 2)
         if str(call.from_user.id) != uid:
             return bot.answer_callback_query(call.id, "🚫 Bạn không phải người yêu cầu câu hỏi này.", show_alert=True)
 
+        # Tạo một đối tượng message giả lập để truyền vào ask_command
         msg = SimpleNamespace(
             chat=call.message.chat,
             message_id=call.message.message_id,
@@ -701,11 +728,12 @@ def retry_button(call):
         )
 
         bot.answer_callback_query(call.id, "🔁 Đang thử lại câu hỏi...")
+        # Cập nhật tin nhắn ban đầu thành "🤖" để cho thấy đang xử lý
         try:
             bot.edit_message_text("🤖", call.message.chat.id, call.message.message_id)
         except telebot.apihelper.ApiTelegramException as e:
             logging.warning(f"Failed to edit message {call.message.message_id} on retry: {e}. Sending new 'thinking' message.")
-            bot.send_message(call.message.chat.id, "🤖")
+            bot.send_message(call.message.chat.id, "🤖") # Send new message if edit fails
 
         ask_command(msg)
     except Exception as e:
@@ -714,6 +742,7 @@ def retry_button(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("tts|"))
 def tts_button(call):
+    """Xử lý nút 'Chuyển sang Voice' từ câu trả lời /ask."""
     try:
         parts = call.data.split("|")
         uid = parts[1]
@@ -742,7 +771,7 @@ def tts_button(call):
                 bot.send_voice(call.message.chat.id, f, caption="🗣️ Đây là Voice ZProject:v", reply_to_message_id=call.message.message_id)
             except telebot.apihelper.ApiTelegramException as e:
                 logging.warning(f"Failed to send voice replying to message {call.message.message_id}: {e}. Sending without reply_to.")
-                f.seek(0)
+                f.seek(0) # Reset con trỏ file
                 bot.send_voice(call.message.chat.id, f, caption="🗣️ Đây là Voice ZProject:v")
         os.remove(filename)
         bot.answer_callback_query(call.id, "🎧 Voice đã được gửi!")
@@ -750,21 +779,15 @@ def tts_button(call):
         bot.answer_callback_query(call.id, "⚠️ Lỗi khi tạo voice.", show_alert=True)
         logging.error(f"[TTS] Lỗi: {e}")
 
-# Thêm handler mặc định để phản hồi với admin
-@bot.message_handler(func=lambda message: True)
-def handle_all_messages(message):
-    if message.from_user.id == ADMIN_ID:
-        logging.info(f"Received message from admin {ADMIN_ID}: {message.text}")
-        if not any(message.text.startswith(cmd) for cmd in ["/start", "/help", "/time", "/ask", "/ngl", "/noti", "/sever", "/tuongtac", "/phanhoi", "/adminph"]):
-            send_message_robustly(message.chat.id, text="🚀 Admin, tôi đã nhận được tin nhắn của bạn! Vui lòng dùng /help để xem lệnh.", parse_mode="HTML", reply_to_message_id=message.message_id)
-
 # === Webhook Flask ===
 @app.route("/")
 def index():
+    """Trang chủ đơn giản cho biết bot đang hoạt động."""
     return "<h3>🛰️ ZProject Bot đang hoạt động!</h3>"
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
+    """Điểm cuối webhook để nhận cập nhật từ Telegram."""
     try:
         update = telebot.types.Update.de_json(request.data.decode("utf-8"))
         bot.process_new_updates([update])
@@ -785,3 +808,4 @@ if __name__ == "__main__":
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
     except Exception as e:
         logging.critical(f"Lỗi nghiêm trọng khi khởi động bot: {e}")
+
