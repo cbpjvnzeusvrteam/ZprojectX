@@ -168,8 +168,8 @@ def increment_interaction_count(func):
         return func(message, *args, **kwargs)
     return wrapper
 
-# Hàm gửi tin nhắn có xử lý lỗi reply_to_message_id
-def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_markup=None, parse_mode="HTML", reply_to_message_id=None):
+# Hàm gửi tin nhắn có xử lý lỗi reply_to_message_id và các tham số khác
+def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_markup=None, parse_mode="HTML", reply_to_message_id=None, disable_web_page_preview=False):
     try:
         if photo:
             return bot.send_photo(
@@ -186,7 +186,8 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
                 text=text,
                 reply_markup=reply_markup,
                 parse_mode=parse_mode,
-                reply_to_message_id=reply_to_message_id
+                reply_to_message_id=reply_to_message_id,
+                disable_web_page_preview=disable_web_page_preview # Đã thêm tham số này
             )
     except telebot.apihelper.ApiTelegramException as e:
         if "message to be replied not found" in str(e):
@@ -205,7 +206,8 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
                     chat_id=chat_id,
                     text=text,
                     reply_markup=reply_markup,
-                    parse_mode=parse_mode
+                    parse_mode=parse_mode,
+                    disable_web_page_preview=disable_web_page_preview # Đã thêm tham số này
                 )
         else:
             logging.error(f"Error sending message to chat {chat_id}: {e}")
@@ -339,7 +341,8 @@ def send_noti(message):
                 bot.send_message( # Không dùng send_message_robustly ở đây vì đây là gửi thông báo mới, không phải reply
                     chat_id=uid,
                     text=notify_caption,
-                    parse_mode="HTML"
+                    parse_mode="HTML",
+                    disable_web_page_preview=True # Thêm lại tham số này ở đây
                 )
             ok += 1
             time.sleep(0.1)
@@ -354,7 +357,8 @@ def send_noti(message):
         text=f"✅ Gửi thành công: {ok} tin nhắn.\n❌ Gửi thất bại: {fail} tin nhắn.\n"
              f"Danh sách ID thất bại: <code>{failed_ids}</code>",
         parse_mode="HTML",
-        reply_to_message_id=message.message_id
+        reply_to_message_id=message.message_id,
+        disable_web_page_preview=True # Thêm lại tham số này ở đây
     )
 
 @bot.message_handler(commands=["spamngl"])
@@ -796,12 +800,27 @@ def webhook():
 # === Khởi chạy Bot ===
 if __name__ == "__main__":
     try:
+        logging.info("Starting bot...")
         webhook_info = bot.get_webhook_info()
         current_webhook_url = f"{APP_URL}/{TOKEN}"
-        if webhook_info.url != current_webhook_url:
-            bot.remove_webhook()
+
+        # Logic để xóa webhook và đặt lại nếu cần, và quan trọng là DROP PENDING UPDATES
+        # Chỉ remove_webhook và drop_pending_updates nếu URL thay đổi HOẶC CÓ UPDATES ĐANG CHỜ XỬ LÝ
+        if webhook_info.url != current_webhook_url or webhook_info.pending_update_count > 0:
+            logging.info(f"Removing old webhook: {webhook_info.url} with {webhook_info.pending_update_count} pending updates.")
+            # Xóa webhook cũ và bỏ qua tất cả các updates đang chờ xử lý
+            bot.remove_webhook(drop_pending_updates=True)
+            logging.info("Old webhook removed and pending updates dropped.")
+
+            # Đặt lại webhook mới
             bot.set_webhook(url=current_webhook_url)
-            logging.info(f"Webhook đã được đặt tới: {current_webhook_url}")
+            logging.info(f"New webhook set to: {current_webhook_url}")
+        else:
+            logging.info(f"Webhook already set and no pending updates: {current_webhook_url}")
+
+        # Chạy ứng dụng Flask
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
     except Exception as e:
         logging.critical(f"Lỗi nghiêm trọng khi khởi động bot: {e}")
+
