@@ -29,7 +29,7 @@ logging.basicConfig(
 )
 
 # === Cấu hình chung ===
-TOKEN = os.environ.get("BOT_TOKEN", "7539540916:AAFH3TBho-13IT6RB_nynN1T9j83GizVDNo")
+TOKEN = os.environ.get("BOT_TOKEN", "7539540916:AAENFBF2B2dyXLITmEC2ccgLYim2t9vxOQk")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 5819094246))
 APP_URL = "https://zproject-111.onrender.com"
 
