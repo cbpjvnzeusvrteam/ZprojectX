@@ -43,6 +43,9 @@ GROUP_INFOS = []
 # Điều này cần thiết để admin có thể reply và bot biết gửi về đâu
 bot.feedback_messages = {}
 
+# Biến toàn cục để đếm số lượt tương tác
+interaction_count = 0
+
 # --- Cấu hình Requests với Retry và Timeout chung ---
 session = requests.Session()
 retries = Retry(total=5, backoff_factor=1, status_forcelist=[502, 503, 504], allowed_methods=frozenset(['GET', 'POST']))
@@ -72,6 +75,7 @@ NGL_SUCCESS_IMAGE_URL = "https://i.ibb.co/fV1srXJ8/9885878c-2a4b-4246-ae2e-fda17
 # URL ảnh cho lệnh /start
 START_IMAGE_URL = "https://i.ibb.co/MkQ2pTjv/ca68c4b2-60dc-4eb1-9a20-ebf2cc5c557f.jpg"
 NOTI_IMAGE_URL = "https://i.ibb.co/QvrB4zMB/ca68c4b2-2a4b-4246-ae2e-fda17d735e2d.jpg" # URL ảnh cho thông báo mặc định
+TUONGTAC_IMAGE_URL = "https://i.ibb.co/YF4yRCBP/1751301092916.png" # URL ảnh cho lệnh /tuongtac
 
 # --- Các hàm Dummy (Cần thay thế bằng logic thực tế của bạn) ---
 def load_user_memory(user_id):
@@ -151,10 +155,18 @@ def build_reply_button(user_id, question, reply_id=None):
     )
     return markup
 
+# Decorator để tăng interaction_count cho mỗi lệnh
+def increment_interaction_count(func):
+    def wrapper(message, *args, **kwargs):
+        global interaction_count
+        interaction_count += 1
+        return func(message, *args, **kwargs)
+    return wrapper
 
 # === LỆNH XỬ LÝ TIN NHẮN ===
 
 @bot.message_handler(commands=["start"])
+@increment_interaction_count
 def start_cmd(message):
     """Xử lý lệnh /start, hiển thị thông tin bot và các liên kết."""
     sync_chat_to_server(message.chat)
@@ -178,6 +190,7 @@ def start_cmd(message):
     )
 
 @bot.message_handler(commands=["help"])
+@increment_interaction_count
 def help_command(message):
     """Xử lý lệnh /help, hiển thị menu các lệnh."""
     sync_chat_to_server(message.chat)
@@ -189,7 +202,8 @@ def help_command(message):
         "•  <code>/ask &lt;câu hỏi&gt;</code> - Hỏi AI Được Tích Hợp WormGpt V2.\n"
         "•  <code>/spamngl &lt;username&gt; &lt;tin_nhắn&gt; &lt;số_lần&gt;</code> - Spam Ngl.\n"
         "•  <code>/noti &lt;nội dung&gt;</code> - <i>(Chỉ Admin)</i> Gửi thông báo.\n"
-        "•  <code>/sever</code> - <i>(Chỉ Admin)</i> Sever Bot."
+        "•  <code>/sever</code> - <i>(Chỉ Admin)</i> Sever Bot.\n"
+        "•  <code>/tuongtac</code> - Xem tổng số lượt tương tác của bot."
     )
     bot.send_photo(
         chat_id=message.chat.id,
@@ -200,6 +214,7 @@ def help_command(message):
     )
 
 @bot.message_handler(commands=["time"])
+@increment_interaction_count
 def time_cmd(message):
     """Xử lý lệnh /time, hiển thị thời gian hoạt động của bot."""
     sync_chat_to_server(message.chat)
@@ -215,7 +230,29 @@ def time_cmd(message):
         parse_mode="HTML"
     )
 
+@bot.message_handler(commands=["tuongtac"])
+@increment_interaction_count
+def tuongtac_command(message):
+    """Xử lý lệnh /tuongtac, hiển thị tổng số lượt tương tác của bot."""
+    sync_chat_to_server(message.chat)
+    
+    reply_text = (
+        f"<b>📊 THỐNG KÊ ZPROJECT BOT</b>\n\n"
+        f"● Tổng Thống Kê Zproject Bot.\n\n"
+        f"<b>Tổng số lượt tương tác:</b> <code>{interaction_count}</code>\n"
+        f"<i>Lưu ý: Số Lượt Tương Tác Càng Cao Chứng Tỏ Độ Uy Tín Của Bot 🎉.</i>"
+    )
+    
+    bot.send_photo(
+        chat_id=message.chat.id,
+        photo=TUONGTAC_IMAGE_URL,
+        caption=reply_text,
+        parse_mode="HTML",
+        reply_to_message_id=message.message_id
+    )
+
 @bot.message_handler(commands=["noti"])
+@increment_interaction_count
 def send_noti(message):
     """Xử lý lệnh /noti, cho phép Admin gửi thông báo kèm ảnh (tùy chọn) tới tất cả người dùng/nhóm."""
     if message.from_user.id != ADMIN_ID:
@@ -267,6 +304,7 @@ def send_noti(message):
     )
 
 @bot.message_handler(commands=["spamngl"])
+@increment_interaction_count
 def spam_ngl_command(message):
     """Xử lý lệnh /spamngl để gửi tin nhắn ẩn danh tới NGL."""
     sync_chat_to_server(message.chat)
@@ -328,6 +366,7 @@ def spam_ngl_command(message):
         bot.reply_to(message, f"❌ Đã xảy ra lỗi không mong muốn: <code>{e}</code>", parse_mode="HTML")
 
 @bot.message_handler(commands=["phanhoi"])
+@increment_interaction_count
 def send_feedback_to_admin(message):
     """Xử lý lệnh /phanhoi, cho phép người dùng gửi phản hồi đến admin."""
     sync_chat_to_server(message.chat)
@@ -385,6 +424,7 @@ def send_feedback_to_admin(message):
         bot.reply_to(message, "❌ Đã xảy ra lỗi khi gửi phản hồi. Vui lòng thử lại sau.", parse_mode="HTML")
 
 @bot.message_handler(commands=["adminph"])
+@increment_interaction_count
 def admin_reply_to_feedback(message):
     """Xử lý lệnh /adminph, cho phép admin phản hồi lại người dùng đã gửi feedback."""
     if message.from_user.id != ADMIN_ID:
@@ -437,6 +477,7 @@ def admin_reply_to_feedback(message):
 
 
 @bot.message_handler(commands=["sever"])
+@increment_interaction_count
 def show_groups(message):
     """Xử lý lệnh /sever, hiển thị danh sách các nhóm bot đang tham gia (chỉ Admin)."""
     if message.from_user.id != ADMIN_ID:
@@ -451,6 +492,7 @@ def show_groups(message):
     bot.reply_to(message, text, parse_mode="HTML", disable_web_page_preview=True)
 
 @bot.message_handler(commands=["ask"])
+@increment_interaction_count
 def ask_command(message):
     """Xử lý lệnh /ask để gửi câu hỏi đến Gemini AI. Hỗ trợ hỏi kèm ảnh."""
     sync_chat_to_server(message.chat)
@@ -592,7 +634,7 @@ def retry_button(call):
         bot.answer_callback_query(call.id, "🔁 Đang thử lại câu hỏi...")
         # Cập nhật tin nhắn ban đầu thành "🤖" để cho thấy đang xử lý
         bot.edit_message_text("🤖", call.message.chat.id, call.message.message_id)
-        ask_command(msg)
+        ask_command(msg) # Call ask_command, nó sẽ tự động tăng interaction_count
     except Exception as e:
         bot.answer_callback_query(call.id, "⚠️ Lỗi khi thử lại!", show_alert=True)
         logging.error(f"[RETRY] Lỗi: {e}")
