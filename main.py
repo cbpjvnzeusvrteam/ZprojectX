@@ -247,7 +247,7 @@ def help_command(message):
         "•  <code>/help</code>  - Show Menu Zproject Bot.\n"
         "•  <code>/time</code>  - Uptime Zproject Bot.\n"
         "•  <code>/ask &lt;câu hỏi&gt;</code> - Hỏi AI Được Tích Hợp WormGpt V2.\n"
-        "•  <code>/spamngl &lt;username&gt; &lt;tin_nhắn&gt; &lt;số_lần&gt;</code> - Spam Ngl.\n"
+        "•  <code>/ngl &lt;username&gt; &lt;tin_nhắn&gt; &lt;số_lần&gt;</code> - Spam Ngl.\n"
         "•  <code>/noti &lt;nội dung&gt;</code> - <i>(Chỉ Admin)</i> Gửi thông báo.\n"
         "•  <code>/sever</code> - <i>(Chỉ Admin)</i> Sever Bot.\n"
         "•  <code>/tuongtac</code> - Xem tổng số lượt tương tác của bot.\n"
@@ -357,10 +357,10 @@ def send_noti(message):
         reply_to_message_id=message.message_id
     )
 
-@bot.message_handler(commands=["spamngl"])
+@bot.message_handler(commands=["ngl"])
 @increment_interaction_count
 def spam_ngl_command(message):
-    """Xử lý lệnh /spamngl để gửi tin nhắn ẩn danh tới NGL.
+    """Xử lý lệnh /ngl để gửi tin nhắn ẩn danh tới NGL.
        Khi lỗi, sẽ bỏ qua lệnh này cho người dùng hiện tại và đợi lệnh mới."""
     sync_chat_to_server(message.chat)
 
@@ -368,7 +368,7 @@ def spam_ngl_command(message):
 
     if len(args) < 4:
         # Sử dụng send_message_robustly
-        return send_message_robustly(message.chat.id, text="⚠️ Sử dụng: <code>/spamngl &lt;username&gt; &lt;tin_nhan&gt; &lt;số_lần&gt;</code>", parse_mode="HTML", reply_to_message_id=message.message_id)
+        return send_message_robustly(message.chat.id, text="⚠️ Sử dụng: <code>/ngl &lt;username&gt; &lt;tin_nhan&gt; &lt;số_lần&gt;</code>", parse_mode="HTML", reply_to_message_id=message.message_id)
 
     username = args[1]
     tinnhan = args[2]
@@ -426,7 +426,7 @@ def spam_ngl_command(message):
         logging.error(f"Lỗi phân tích JSON từ NGL API cho người dùng {message.from_user.id}: {e}")
         send_message_robustly(message.chat.id, text="❌ Lỗi: Phản hồi API NGL không hợp lệ.", parse_mode="HTML", reply_to_message_id=message.message_id)
     except Exception as e:
-        logging.error(f"Lỗi không xác định khi xử lý /spamngl cho người dùng {message.from_user.id}: {e}")
+        logging.error(f"Lỗi không xác định khi xử lý /ngl cho người dùng {message.from_user.id}: {e}")
         send_message_robustly(message.chat.id, text=f"❌ Đã xảy ra lỗi không mong muốn khi xử lý lệnh spam NGL: <code>{e}</code>", parse_mode="HTML", reply_to_message_id=message.message_id)
 
 @bot.message_handler(commands=["phanhoi"])
