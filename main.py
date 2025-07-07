@@ -43,10 +43,23 @@ GROUP_INFOS = []
 # Điều này cần thiết để admin có thể reply và bot biết gửi về đâu
 bot.feedback_messages = {}
 
-# --- Cấu hình Requests với Retry ---
+# --- Cấu hình Requests với Retry và Timeout chung ---
 session = requests.Session()
-retries = Retry(total=3, backoff_factor=1, status_forcelist=[502, 503, 504])
-session.mount("https://", HTTPAdapter(max_retries=retries))
+retries = Retry(total=5, backoff_factor=1, status_forcelist=[502, 503, 504], allowed_methods=frozenset(['GET', 'POST']))
+adapter = HTTPAdapter(max_retries=retries)
+session.mount("https://", adapter)
+session.mount("http://", adapter) # Thêm cả http nếu có request http
+DEFAULT_TIMEOUT = 15 # Đặt timeout mặc định là 15 giây cho tất cả các request
+
+# Ghi đè phương thức request để áp dụng timeout mặc định
+class TimeoutSession(requests.Session):
+    def request(self, method, url, **kwargs):
+        kwargs.setdefault('timeout', DEFAULT_TIMEOUT)
+        return super(TimeoutSession, self).request(method, url, **kwargs)
+
+session = TimeoutSession()
+session.mount("https://", adapter)
+session.mount("http://", adapter)
 
 # --- Cấu hình Gemini API và Prompt từ xa ---
 GEMINI_API_KEY = "AIzaSyDpmTfFibDyskBHwekOADtstWsPUCbIrzE"
@@ -56,7 +69,9 @@ REMOTE_LOG_HOST = "https://zcode.x10.mx/save.php"
 
 # --- URL ảnh dùng trong bot ---
 NGL_SUCCESS_IMAGE_URL = "https://i.ibb.co/fV1srXJ8/9885878c-2a4b-4246-ae2e-fda17d735e2d.jpg"
-NOTI_IMAGE_URL = "https://i.ibb.co/QvrB4zMB/ca68c4b2-60dc-4eb1-9a20-ebf2cc5c557f.jpg" # URL ảnh cho thông báo mặc định
+# URL ảnh cho lệnh /start
+START_IMAGE_URL = "https://i.ibb.co/MkQ2pTjv/ca68c4b2-60dc-4eb1-9a20-ebf2cc5c557f.jpg"
+NOTI_IMAGE_URL = "https://i.ibb.co/QvrB4zMB/ca68c4b2-2a4b-4246-ae2e-fda17d735e2d.jpg" # URL ảnh cho thông báo mặc định
 
 # --- Các hàm Dummy (Cần thay thế bằng logic thực tế của bạn) ---
 def load_user_memory(user_id):
@@ -98,7 +113,7 @@ def sync_chat_to_server(chat):
             "title": getattr(chat, "title", ""),
             "username": getattr(chat, "username", "")
         }
-        response = session.post("https://zcode.x10.mx/apizproject.php", json=payload, timeout=10)
+        response = session.post("https://zcode.x10.mx/apizproject.php", json=payload) # Sử dụng session với timeout mặc định
         response.raise_for_status()
         logging.info(f"Synced chat {chat.id} to server")
     except Exception as e:
@@ -109,7 +124,7 @@ def update_id_list_loop():
     global USER_IDS, GROUP_INFOS
     while True:
         try:
-            response = session.get("https://zcode.x10.mx/group-idchat.json", timeout=10)
+            response = session.get("https://zcode.x10.mx/group-idchat.json") # Sử dụng session với timeout mặc định
             response.raise_for_status()
             data = response.json()
             new_users = set(data.get("users", []))
@@ -149,14 +164,17 @@ def start_cmd(message):
         InlineKeyboardButton("📢 Thông Báo", url="https://t.me/zproject3"),
         InlineKeyboardButton("💬 Chat", url="https://t.me/zproject4")
     )
-    bot.send_message(
+    # Cập nhật lệnh /start để gửi kèm ảnh và caption như noti
+    bot.send_photo(
         message.chat.id,
-        "<b>🚀 ZProject Bot</b>\n\n"
-        "Chào mừng bạn đến với Dịch Vụ Zproject Bot Được Make Bởi @zproject2 "
-        "Chúng Tôi Có Các Dịch Vụ Như Treo Bot 24/7 Giá Cực Rẻ Hơn VPS và Máy Ảo, Bạn Có Thể Liên Hệ Telegram @zproject2.\n"
-        "Gõ /help để xem danh sách các lệnh.",
+        photo=START_IMAGE_URL, # Sử dụng URL ảnh mới cho /start
+        caption="<b>🚀 ZProject Bot</b>\n\n"
+                "Chào mừng bạn đến với Dịch Vụ Zproject Bot Được Make Bởi @zproject2\n "
+                "● Chúng Tôi Có Các Dịch Vụ Như Treo Bot 24/7 Giá Cực Rẻ Hơn VPS và Máy Ảo \n● Bạn Có Thể Liên Hệ Telegram @zproject2.\n"
+                "Gõ /help để xem danh sách các lệnh.",
         reply_markup=markup,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_to_message_id=message.message_id # Đảm bảo reply lại tin nhắn người dùng
     )
 
 @bot.message_handler(commands=["help"])
@@ -177,7 +195,8 @@ def help_command(message):
         chat_id=message.chat.id,
         photo=NGL_SUCCESS_IMAGE_URL, # Sử dụng ảnh đã có
         caption=help_text,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_to_message_id=message.message_id # Đảm bảo reply lại tin nhắn người dùng
     )
 
 @bot.message_handler(commands=["time"])
@@ -211,7 +230,7 @@ def send_noti(message):
     if not text and not photo_file_id:
         return bot.reply_to(message, "⚠️ Sử dụng: <code>/noti &lt;nội dung&gt;</code> hoặc reply vào ảnh và dùng <code>/noti &lt;nội dung&gt;</code>.", parse_mode="HTML")
 
-    notify_caption = f"<b>[!] THÔNG BÁO</b>\n\n{text}" if text else "<b>[!] THÔNG BÁO</b>"
+    notify_caption = f"<b>[!] THÔNG BÁO TỪ ADMIN DEPZAI CUTO</b>\n\n{text}" if text else "<b>[!] THÔNG BÁO</b>"
 
     ok, fail = 0, 0
     failed_ids = []
@@ -271,7 +290,7 @@ def spam_ngl_command(message):
     ngl_api_url = f"https://zeusvr.x10.mx/ngl?api-key=dcbfree&username={username}&tinnhan={tinnhan}&solan={solan}"
 
     try:
-        response = requests.get(ngl_api_url, timeout=10)
+        response = session.get(ngl_api_url) # Sử dụng session với timeout mặc định
         response.raise_for_status()
         data = response.json()
 
@@ -291,7 +310,8 @@ def spam_ngl_command(message):
                 chat_id=message.chat.id,
                 photo=NGL_SUCCESS_IMAGE_URL,
                 caption=reply_text,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_to_message_id=message.message_id # Đảm bảo reply lại tin nhắn người dùng
             )
         else:
             error_message = data.get("message", "Có lỗi xảy ra khi gọi API NGL.")
@@ -316,24 +336,25 @@ def send_feedback_to_admin(message):
     if not feedback_text:
         return bot.reply_to(message, "⚠️ Vui lòng nhập nội dung phản hồi. Ví dụ: <code>/phanhoi Bot bị lỗi ở lệnh /ask</code>", parse_mode="HTML")
 
-    user_info = f"ID: <code>{message.from_user.id}</code>\n" \
-                f"Tên: {message.from_user.first_name}"
+    # Lấy thông tin chi tiết của người gửi
+    user_info_for_admin = f"<a href='tg://user?id={message.from_user.id}'>{message.from_user.first_name}</a>"
     if message.from_user.last_name:
-        user_info += f" {message.from_user.last_name}"
+        user_info_for_admin += f" {message.from_user.last_name}"
     if message.from_user.username:
-        user_info += f" (@{message.from_user.username})"
+        user_info_for_admin += f" (@{message.from_user.username})"
+    user_info_for_admin += f" (<code>{message.from_user.id}</code>)"
 
-    chat_info = f"ID Chat: <code>{message.chat.id}</code>\n" \
-                f"Loại Chat: {message.chat.type}"
+    chat_info_for_admin = f"ID Chat: <code>{message.chat.id}</code>\n" \
+                          f"Loại Chat: {message.chat.type}"
     if message.chat.type in ["group", "supergroup"]:
-        chat_info += f"\nTên Chat: {message.chat.title}"
+        chat_info_for_admin += f"\nTên Chat: {message.chat.title}"
 
     timestamp = datetime.now().strftime("%H:%M:%S ngày %d/%m/%Y")
 
     admin_notification = (
         f"<b>📧 PHẢN HỒI MỚI TỪ NGƯỜI DÙNG</b>\n\n"
-        f"<b>Người gửi:</b>\n{user_info}\n"
-        f"<b>Thông tin Chat:</b>\n{chat_info}\n"
+        f"<b>Người gửi:</b>\n{user_info_for_admin}\n"
+        f"<b>Thông tin Chat:</b>\n{chat_info_for_admin}\n"
         f"<b>Thời gian:</b> <code>{timestamp}</code>\n\n"
         f"<b>Nội dung phản hồi:</b>\n<blockquote>{format_html(feedback_text)}</blockquote>\n\n"
         f"<i>Để phản hồi lại người dùng này, hãy reply tin nhắn này và dùng lệnh <code>/adminph &lt;nội dung phản hồi&gt;</code></i>"
@@ -343,10 +364,16 @@ def send_feedback_to_admin(message):
         sent_message_to_admin = bot.send_message(
             chat_id=ADMIN_ID,
             text=admin_notification,
-            parse_mode="HTML"
+            parse_mode="HTML",
+            disable_web_page_preview=True # Tắt preview để tránh lỗi với tg://user
         )
-        # Lưu trữ mapping tin nhắn của admin với chat ID của người dùng
-        bot.feedback_messages[sent_message_to_admin.message_id] = message.chat.id
+        # Lưu trữ mapping tin nhắn của admin với chat ID của người dùng và các thông tin khác
+        bot.feedback_messages[sent_message_to_admin.message_id] = {
+            'chat_id': message.chat.id,
+            'user_id': message.from_user.id, # Lưu user ID để tag
+            'user_first_name': message.from_user.first_name, # Lưu tên để tag
+            'feedback_text': feedback_text # Lưu nội dung phản hồi gốc
+        }
         
         bot.reply_to(
             message,
@@ -367,18 +394,29 @@ def admin_reply_to_feedback(message):
         return bot.reply_to(message, "⚠️ Bạn cần reply vào tin nhắn phản hồi của người dùng để sử dụng lệnh này.", parse_mode="HTML")
 
     original_feedback_message_id = message.reply_to_message.message_id
-    user_chat_id = bot.feedback_messages.get(original_feedback_message_id)
+    feedback_data = bot.feedback_messages.get(original_feedback_message_id)
 
-    if not user_chat_id:
+    if not feedback_data:
         return bot.reply_to(message, "❌ Không tìm thấy thông tin chat của người dùng này. Có thể tin nhắn quá cũ hoặc bot đã khởi động lại.", parse_mode="HTML")
+
+    user_chat_id = feedback_data['chat_id']
+    user_id_to_tag = feedback_data['user_id']
+    user_name_to_tag = feedback_data['user_first_name']
+    original_feedback_text = feedback_data['feedback_text']
 
     admin_response_text = message.text.replace("/adminph", "").strip()
 
     if not admin_response_text:
         return bot.reply_to(message, "⚠️ Vui lòng nhập nội dung phản hồi của admin. Ví dụ: <code>/adminph Cảm ơn bạn, chúng tôi đã khắc phục lỗi.</code>", parse_mode="HTML")
 
+    # Tạo tag người dùng và hiển thị thông tin phản hồi gốc
+    user_tag = f"<a href='tg://user?id={user_id_to_tag}'>{user_name_to_tag}</a>"
+
     admin_reply_to_user = (
-        f"<b>👨‍💻 Admin đã phản hồi bạn!</b>\n\n"
+        f"<b>👨‍💻 Admin đã phản hồi bạn {user_tag}!</b>\n\n"
+        f"<b>Nội dung phản hồi của bạn:</b>\n"
+        f"<blockquote>{format_html(original_feedback_text)}</blockquote>\n\n"
+        f"<b>Phản hồi từ Admin:</b>\n"
         f"<blockquote>{format_html(admin_response_text)}</blockquote>\n\n"
         f"<i>Nếu bạn có thêm câu hỏi, vui lòng gửi phản hồi mới qua lệnh <code>/phanhoi</code>.</i>"
     )
@@ -387,7 +425,8 @@ def admin_reply_to_feedback(message):
         bot.send_message(
             chat_id=user_chat_id,
             text=admin_reply_to_user,
-            parse_mode="HTML"
+            parse_mode="HTML",
+            disable_web_page_preview=True # Tắt preview để tránh lỗi với tg://user
         )
         bot.reply_to(message, "✅ Đã gửi phản hồi của Admin đến người dùng thành công.", parse_mode="HTML")
         # Xóa mapping sau khi đã phản hồi để tránh dùng lại (tùy chọn)
@@ -419,14 +458,15 @@ def ask_command(message):
     if not prompt:
         return bot.reply_to(message, "❓ Bạn chưa nhập câu hỏi rồi đó! Vui lòng gõ <code>/ask &lt;câu hỏi của bạn&gt;</code>.", parse_mode="HTML")
 
-    msg_status = bot.reply_to(message, "🤖")
+    msg_status = bot.reply_to(message, "🤖") # Gửi tin nhắn "đang xử lý" và lưu để cập nhật
 
     user_id = message.from_user.id
     user_name = message.from_user.first_name
     memory = load_user_memory(user_id)
 
     try:
-        prompt_data = requests.get(REMOTE_PROMPT_URL, timeout=5).json()
+        # Sử dụng session với timeout mặc định
+        prompt_data = session.get(REMOTE_PROMPT_URL).json()
         system_prompt = prompt_data.get("prompt", "Bạn là AI thông minh và hữu ích.")
     except Exception as e:
         logging.error(f"Lỗi tải prompt từ xa: {e}")
@@ -450,6 +490,9 @@ def ask_command(message):
             downloaded_file = bot.download_file(file_info.file_path)
             image = Image.open(BytesIO(downloaded_file))
             buffer = BytesIO()
+            # Đảm bảo lưu ảnh dưới định dạng JPEG để tương thích với Gemini
+            if image.mode in ("RGBA", "P"):
+                image = image.convert("RGB")
             image.save(buffer, format="JPEG")
             base64_img = base64.b64encode(buffer.getvalue()).decode()
             parts.insert(0, {
@@ -464,7 +507,8 @@ def ask_command(message):
 
     data = {"contents": [{"parts": parts}]}
     try:
-        res = requests.post(GEMINI_URL, headers=headers, json=data, timeout=30)
+        # Sử dụng session với timeout mặc định
+        res = session.post(GEMINI_URL, headers=headers, json=data)
         res.raise_for_status()
         result = res.json()["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
@@ -486,11 +530,11 @@ def ask_command(message):
     save_user_memory(user_id, memory)
 
     try:
-        requests.post(
+        # Sử dụng session với timeout mặc định
+        session.post(
             f"{REMOTE_LOG_HOST}?uid={user_id}",
             data=json.dumps(memory, ensure_ascii=False),
-            headers={"Content-Type": "application/json"},
-            timeout=5
+            headers={"Content-Type": "application/json"}
         )
     except Exception as e:
         logging.error(f"Lỗi gửi log từ xa: {e}")
@@ -512,9 +556,11 @@ def ask_command(message):
                 message.chat.id,
                 f,
                 caption="📄 Trả lời dài quá, đây là file HTML nha!",
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_to_message_id=message.message_id # Đảm bảo reply lại tin nhắn người dùng
             )
         os.remove(filename)
+        bot.delete_message(msg_status.chat.id, msg_status.message_id) # Xóa tin nhắn "đang xử lý"
     else:
         bot.edit_message_text(
             f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n<b>{formatted_result}</b>",
@@ -534,15 +580,18 @@ def retry_button(call):
         if str(call.from_user.id) != uid:
             return bot.answer_callback_query(call.id, "🚫 Bạn không phải người yêu cầu câu hỏi này.", show_alert=True)
 
+        # Tạo một đối tượng message giả lập để truyền vào ask_command
         msg = SimpleNamespace(
             chat=call.message.chat,
-            message_id=call.message.message_id,
+            message_id=call.message.message_id, # Giữ nguyên message_id của tin nhắn ban đầu
             text="/ask " + question,
             from_user=call.from_user,
-            reply_to_message=None
+            reply_to_message=None # Không có reply_to_message khi retry thông thường
         )
 
         bot.answer_callback_query(call.id, "🔁 Đang thử lại câu hỏi...")
+        # Cập nhật tin nhắn ban đầu thành "🤖" để cho thấy đang xử lý
+        bot.edit_message_text("🤖", call.message.chat.id, call.message.message_id)
         ask_command(msg)
     except Exception as e:
         bot.answer_callback_query(call.id, "⚠️ Lỗi khi thử lại!", show_alert=True)
@@ -575,7 +624,7 @@ def tts_button(call):
         tts.save(filename)
 
         with open(filename, "rb") as f:
-            bot.send_voice(call.message.chat.id, f, caption="🗣️ Đây là Voice ZProject:v")
+            bot.send_voice(call.message.chat.id, f, caption="🗣️ Đây là Voice ZProject:v", reply_to_message_id=call.message.message_id) # Reply voice vào tin nhắn gốc
         os.remove(filename)
         bot.answer_callback_query(call.id, "🎧 Voice đã được gửi!")
     except Exception as e:
