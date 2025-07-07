@@ -54,7 +54,7 @@ session.mount("https://", adapter)
 session.mount("http://", adapter)
 
 DEFAULT_TIMEOUT_GLOBAL = 30 # Timeout mặc định cho các request khác
-NGL_REQUEST_TIMEOUT = 15 # Timeout riêng cho NGL (có thể đặt ngắn hơn để bỏ qua nhanh)
+NGL_REQUEST_TIMEOUT = 60 # Timeout riêng cho NGL (có thể đặt ngắn hơn để bỏ qua nhanh)
 
 # Ghi đè phương thức request để áp dụng timeout mặc định, nhưng NGL sẽ dùng timeout riêng
 class TimeoutSession(requests.Session):
