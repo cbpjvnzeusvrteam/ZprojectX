@@ -18,7 +18,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from types import SimpleNamespace
 
-# === Cấu hình logging ===
+# --- Cấu hình logging ---
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -28,10 +28,16 @@ logging.basicConfig(
     ]
 )
 
-# === Cấu hình chung ===
+# --- Cấu hình chung ---
+# Lấy BOT_TOKEN từ biến môi trường, hoặc dùng giá trị mặc định nếu không có (chỉ để phát triển)
 TOKEN = os.environ.get("BOT_TOKEN", "7539540916:AAENFBF2B2dyXLITmEC2ccgLYim2t9vxOQk")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 5819094246))
-APP_URL = "[https://zproject-111.onrender.com](https://zproject-111.onrender.com)"
+
+# !!! ĐÃ SỬA LỖI CÚ PHÁP URL TẠI ĐÂY !!!
+# Đảm bảo APP_URL là URL thuần túy, không có Markdown
+APP_URL = os.environ.get("APP_URL", "https://zproject-111.onrender.com")
+
+logging.info(f"APP_URL được cấu hình: {APP_URL}")
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
@@ -72,16 +78,17 @@ session.mount("http://", adapter)
 
 # --- Cấu hình Gemini API và Prompt từ xa ---
 GEMINI_API_KEY = "AIzaSyDpmTfFibDyskBHwekOADtstWsPUCbIrzE"
-GEMINI_URL = f"[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=){GEMINI_API_KEY}"
-REMOTE_PROMPT_URL = "[https://zcode.x10.mx/prompt.json](https://zcode.x10.mx/prompt.json)"
-REMOTE_LOG_HOST = "[https://zcode.x10.mx/save.php](https://zcode.x10.mx/save.php)"
+# !!! ĐÃ SỬA LỖI CÚ PHÁP URL TẠI ĐÂY !!!
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+REMOTE_PROMPT_URL = "https://zcode.x10.mx/prompt.json" # !!! ĐÃ SỬA LỖI CÚ PHÁP URL TẠI ĐÂY !!!
+REMOTE_LOG_HOST = "https://zcode.x10.mx/save.php" # !!! ĐÃ SỬA LỖI CÚ PHÁP URL TẠI ĐÂY !!!
 
 # --- URL ảnh dùng trong bot ---
-NGL_SUCCESS_IMAGE_URL = "[https://i.ibb.co/fV1srXJ8/9885878c-2a4b-4246-ae2e-fda17d735e2d.jpg](https://i.ibb.co/fV1srXJ8/9885878c-2a4b-4246-ae2e-fda17d735e2d.jpg)"
+NGL_SUCCESS_IMAGE_URL = "https://i.ibb.co/fV1srXJ8/9885878c-2a4b-4246-ae2e-fda17d735e2d.jpg" # !!! ĐÃ SỬA LỖI CÚ PHÁP URL TẠI ĐÂY !!!
 # URL ảnh cho lệnh /start
-START_IMAGE_URL = "[https://i.ibb.co/MkQ2pTjv/ca68c4b2-60dc-4eb1-9a20-ebf2cc5c557f.jpg](https://i.ibb.co/MkQ2pTjv/ca68c4b2-60dc-4eb1-9a20-ebf2cc5c557f.jpg)"
-NOTI_IMAGE_URL = "[https://i.ibb.co/QvrB4zMB/ca68c4b2-2a4b-4246-ae2e-fda17d735e2d.jpg](https://i.ibb.co/QvrB4zMB/ca68c4b2-2a4b-4246-ae2e-fda17d735e2d.jpg)" # URL ảnh cho thông báo mặc định
-TUONGTAC_IMAGE_URL = "[https://i.ibb.co/YF4yRCBP/1751301092916.png](https://i.ibb.co/YF4yRCBP/1751301092916.png)" # URL ảnh cho lệnh /tuongtac
+START_IMAGE_URL = "https://i.ibb.co/MkQ2pTjv/ca68c4b2-60dc-4eb1-9a20-ebf2cc5c557f.jpg" # !!! ĐÃ SỬA LỖI CÚ PHÁP URL TẠI ĐÂY !!!
+NOTI_IMAGE_URL = "https://i.ibb.co/QvrB4zMB/ca68c4b2-2a4b-4246-ae2e-fda17d735e2d.jpg" # !!! ĐÃ SỬA LỖI CÚ PHÁP URL TẠI ĐÂY !!! # URL ảnh cho thông báo mặc định
+TUONGTAC_IMAGE_URL = "https://i.ibb.co/YF4yRCBP/1751301092916.png" # !!! ĐÃ SỬA LỖI CÚ PHÁP URL TẠI ĐÂY !!! # URL ảnh cho lệnh /tuongtac
 
 # --- Các hàm Dummy (Cần thay thế bằng logic thực tế của bạn) ---
 def load_user_memory(user_id):
@@ -99,16 +106,16 @@ def html_escape(text):
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#039;")
 
 class gTTS:
-    """Class dummy cho gTTS."""
+    """Class dummy cho gTTS. Thay thế bằng thư viện gTTS thực tế nếu bạn muốn chức năng này hoạt động."""
     def __init__(self, text, lang="vi", slow=False):
         self.text = text
         self.lang = lang
         self.slow = slow
     def save(self, filename):
         # Logic lưu file âm thanh dummy
+        logging.info(f"Dummy gTTS: Saving '{self.text[:50]}...' to {filename}")
         with open(filename, "wb") as f:
             f.write(b"dummy_audio_data")
-
 
 # === Đồng bộ nhóm/người dùng từ API ===
 def sync_chat_to_server(chat):
@@ -122,7 +129,8 @@ def sync_chat_to_server(chat):
             "title": getattr(chat, "title", ""),
             "username": getattr(chat, "username", "")
         }
-        response = session.post("[https://zcode.x10.mx/apizproject.php](https://zcode.x10.mx/apizproject.php)", json=payload, timeout=DEFAULT_TIMEOUT_GLOBAL)
+        # !!! ĐÃ SỬA LỖI CÚ PHÁP URL TẠI ĐÂY !!!
+        response = session.post("https://zcode.x10.mx/apizproject.php", json=payload, timeout=DEFAULT_TIMEOUT_GLOBAL)
         response.raise_for_status()
         logging.info(f"Synced chat {chat.id} to server")
     except Exception as e:
@@ -133,7 +141,8 @@ def update_id_list_loop():
     global USER_IDS, GROUP_INFOS
     while True:
         try:
-            response = session.get("[https://zcode.x10.mx/group-idchat.json](https://zcode.x10.mx/group-idchat.json)", timeout=DEFAULT_TIMEOUT_GLOBAL)
+            # !!! ĐÃ SỬA LỖI CÚ PHÁP URL TẠI ĐÂY !!!
+            response = session.get("https://zcode.x10.mx/group-idchat.json", timeout=DEFAULT_TIMEOUT_GLOBAL)
             response.raise_for_status()
             data = response.json()
             new_users = set(data.get("users", []))
@@ -152,18 +161,23 @@ Thread(target=update_id_list_loop, daemon=True).start()
 # --- Hàm hỗ trợ cho /ask và callbacks ---
 def build_reply_button(user_id, question, reply_id=None):
     """Tạo các nút phản hồi cho tin nhắn /ask."""
-    safe_q = re.sub(r"[^\w\s]", "", question.strip())[:50]
+    # Giới hạn độ dài của question để tránh lỗi callback_data quá dài
+    safe_q = (re.sub(r"[^\w\s]", "", question.strip())[:50] + '...') if len(question.strip()) > 50 else question.strip()
+    
     markup = InlineKeyboardMarkup()
-    markup.row(
-        InlineKeyboardButton("🔁 Trả lời lại", callback_data=f"retry|{user_id}|{safe_q}"),
-        InlineKeyboardButton("🔊 Chuyển sang Voice", callback_data=f"tts|{user_id}|{reply_id}") if reply_id else None
-    )
+    buttons = [
+        InlineKeyboardButton("🔁 Trả lời lại", callback_data=f"retry|{user_id}|{safe_q}")
+    ]
+    if reply_id:
+        buttons.append(InlineKeyboardButton("🔊 Chuyển sang Voice", callback_data=f"tts|{user_id}|{reply_id}"))
+    markup.row(*buttons)
     return markup
 
 # Decorator để tăng interaction_count cho mỗi lệnh
 def increment_interaction_count(func):
     def wrapper(message, *args, **kwargs):
         global interaction_count
+        interaction_count += 1 # Tăng lượt tương tác
         return func(message, *args, **kwargs)
     return wrapper
 
@@ -186,7 +200,7 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
                 reply_markup=reply_markup,
                 parse_mode=parse_mode,
                 reply_to_message_id=reply_to_message_id,
-                disable_web_page_preview=disable_web_page_preview # Pass the argument here
+                disable_web_page_preview=disable_web_page_preview
             )
     except telebot.apihelper.ApiTelegramException as e:
         if "message to be replied not found" in str(e):
@@ -206,7 +220,7 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
                     text=text,
                     reply_markup=reply_markup,
                     parse_mode=parse_mode,
-                    disable_web_page_preview=disable_web_page_preview # Pass the argument here
+                    disable_web_page_preview=disable_web_page_preview
                 )
         else:
             logging.error(f"Error sending message to chat {chat_id}: {e}")
@@ -220,10 +234,11 @@ def start_cmd(message):
     """Xử lý lệnh /start, hiển thị thông tin bot và các liên kết."""
     sync_chat_to_server(message.chat)
     markup = InlineKeyboardMarkup()
+    # !!! ĐÃ SỬA LỖI CÚ PHÁP URL TẠI ĐÂY !!!
     markup.add(
-        InlineKeyboardButton("👤 Admin", url="[https://t.me/zproject2](https://t.me/zproject2)"),
-        InlineKeyboardButton("📢 Thông Báo", url="[https://t.me/zproject3](https://t.me/zproject3)"),
-        InlineKeyboardButton("💬 Chat", url="[https://t.me/zproject4](https://t.me/zproject4)")
+        InlineKeyboardButton("👤 Admin", url="https://t.me/zproject2"),
+        InlineKeyboardButton("📢 Thông Báo", url="https://t.me/zproject3"),
+        InlineKeyboardButton("💬 Chat", url="https://t.me/zproject4")
     )
     send_message_robustly(
         message.chat.id,
@@ -385,7 +400,8 @@ def spam_ngl_command(message):
         # Sử dụng send_message_robustly
         return send_message_robustly(message.chat.id, text="❗ Số lần phải là một số hợp lệ, không phải ký tự.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
-    ngl_api_url = f"[https://zeusvr.x10.mx/ngl?api-key=dcbfree&username=](https://zeusvr.x10.mx/ngl?api-key=dcbfree&username=){username}&tinnhan={tinnhan}&solan={solan}"
+    # !!! ĐÃ SỬA LỖI CÚ PHÁP URL TẠI ĐÂY !!!
+    ngl_api_url = f"https://zeusvr.x10.mx/ngl?api-key=dcbfree&username={username}&tinnhan={tinnhan}&solan={solan}"
 
     try:
         response = session.get(ngl_api_url) 
@@ -546,7 +562,8 @@ def show_groups(message):
     text = "<b>📦 Sever:</b>\n\n"
     for g in GROUP_INFOS:
         title = g.get("title", "Không rõ tên nhóm")
-        link = f"[https://t.me/](https://t.me/){g.get('username')}" if g.get("username") else "⛔ Không có link mời"
+        # !!! ĐÃ SỬA LỖI CÚ PHÁP URL TẠI ĐÂY !!!
+        link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Không có link mời"
         text += f"📌 <b>{title}</b>\n{link}\n\n"
     send_message_robustly(message.chat.id, text=text, parse_mode="HTML", disable_web_page_preview=True, reply_to_message_id=message.message_id)
 
@@ -631,10 +648,10 @@ def ask_command(message):
 
     # Gửi tin nhắn "đang xử lý" ban đầu
     try:
-        msg_status = bot.send_message(message.chat.id, "🤖", reply_to_message_id=message.message_id)
+        msg_status = bot.send_message(message.chat.id, "🤖 Đang suy nghĩ...", reply_to_message_id=message.message_id)
     except telebot.apihelper.ApiTelegramException as e:
         logging.warning(f"Failed to send initial 'thinking' message in chat {message.chat.id}: {e}. Proceeding without reply_to.")
-        msg_status = bot.send_message(message.chat.id, "🤖") # Gửi mà không reply_to nếu lỗi
+        msg_status = bot.send_message(message.chat.id, "🤖 Đang suy nghĩ...") # Gửi mà không reply_to nếu lỗi
 
     user_id = message.from_user.id
     user_name = message.from_user.first_name
@@ -664,7 +681,7 @@ def ask_command(message):
             photo = message.reply_to_message.photo[-1]
             file_info = bot.get_file(photo.file_id)
             downloaded_file = bot.download_file(file_info.file_path)
-            image = Image.open(Bytesio(downloaded_file))
+            image = Image.open(BytesIO(downloaded_file))
             buffer = BytesIO()
             if image.mode in ("RGBA", "P"):
                 image = image.convert("RGB")
@@ -704,7 +721,7 @@ def ask_command(message):
         "answer": result,
         "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "with_image": image_attached,
-        "name": user_name
+        "name": message.from_user.first_name # Lấy lại từ message để đảm bảo cập nhật
     }
     memory.append(entry)
     save_user_memory(user_id, memory)
@@ -728,19 +745,18 @@ def ask_command(message):
 
     # Tính toán tổng độ dài của văn bản để quyết định gửi file hay không
     # Cần tính độ dài của nội dung đã được HTML escaped
-    total_html_length = sum(len(part["content"]) for part in response_parts)
-    
+    total_html_length = sum(len(part["content"]) for part in response_parts if part["type"] == "text")
+    # Ước tính kích thước của code blocks nếu chúng cũng được gửi trong cùng tin nhắn
+    total_code_length = sum(len(part["content"]) + len("<b>Code:</b>\n") for part in response_parts if part["type"] == "code")
+
     # Telegram có giới hạn 4096 ký tự cho một tin nhắn HTML. Trừ hao một chút để an toàn.
-    if total_html_length > 4000: 
+    if total_html_length + total_code_length > 4000:
         filename = f"zproject_{reply_id}.txt" # Đổi thành .txt hoặc .md
         with open(filename, "w", encoding="utf-8") as f:
             for part in response_parts:
                 if part["type"] == "text":
-                    # Khi ghi vào file, chúng ta muốn nội dung "thô" không phải HTML escaped.
-                    # Nên dùng raw_content nếu có (cho code) hoặc undo html_escape cho text.
                     f.write(part["content"].replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").replace("&quot;", "\"").replace("&#039;", "'"))
                 elif part["type"] == "code":
-                    # Ghi code block với Markdown vào file
                     f.write("\n```\n")
                     f.write(part["raw_content"]) # Sử dụng raw_content để ghi code gốc vào file
                     f.write("\n```\n")
@@ -757,7 +773,7 @@ def ask_command(message):
                 )
             except telebot.apihelper.ApiTelegramException as e:
                 logging.warning(f"Failed to send document replying to message {message.message_id}: {e}. Sending without reply_to.")
-                f.seek(0)
+                f.seek(0) # Reset con trỏ file
                 bot.send_document(
                     message.chat.id,
                     f,
@@ -775,15 +791,11 @@ def ask_command(message):
     else:
         # Gửi từng phần riêng biệt nếu có nhiều code block, hoặc gửi một tin nhắn duy nhất
         current_message_text = f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n"
-        # Các nút chung (Trả lời lại, Voice) sẽ được thêm vào markup của tin nhắn cuối cùng hoặc tin nhắn duy nhất
         
         sent_messages = [] # Để lưu các message_id nếu phải gửi nhiều tin nhắn
 
-        # Tạo một bản sao của main_markup để có thể thêm các nút copy code vào từng phần nếu cần
-        combined_markup = InlineKeyboardMarkup()
-        if main_markup.keyboard:
-            for row in main_markup.keyboard:
-                combined_markup.row(*row)
+        # Lấy markup chính để thêm vào tin nhắn cuối cùng
+        final_markup_to_send = main_markup
 
         for i, part in enumerate(response_parts):
             if part["type"] == "text":
@@ -792,19 +804,22 @@ def ask_command(message):
                 # Khi gặp code block, gửi đoạn văn bản hiện tại (nếu có) trước
                 if len(current_message_text.strip()) > len(f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n"):
                     try:
+                        sent_msg = bot.edit_message_text( # Cố gắng edit tin nhắn status
+                            current_message_text,
+                            msg_status.chat.id,
+                            msg_status.message_id,
+                            parse_mode="HTML"
+                        )
+                        sent_messages.append(sent_msg.message_id)
+                        # Đặt lại msg_status để các phần tiếp theo gửi tin nhắn mới
+                        msg_status = None
+                    except telebot.apihelper.ApiTelegramException as e:
+                        logging.warning(f"Failed to edit status message with text part {i} in chat {message.chat.id}: {e}. Sending as new message.")
                         sent_msg = bot.send_message(
                             message.chat.id,
                             text=current_message_text,
                             parse_mode="HTML",
-                            reply_to_message_id=message.message_id if not sent_messages else None # Reply to original message only for the first part
-                        )
-                        sent_messages.append(sent_msg.message_id)
-                    except telebot.apihelper.ApiTelegramException as e:
-                        logging.warning(f"Failed to send text part {i} in chat {message.chat.id}: {e}. Sending without reply_to.")
-                        sent_msg = bot.send_message(
-                            message.chat.id,
-                            text=current_message_text,
-                            parse_mode="HTML"
+                            reply_to_message_id=message.message_id if not sent_messages else None
                         )
                         sent_messages.append(sent_msg.message_id)
 
@@ -815,7 +830,7 @@ def ask_command(message):
                         text=f"<b>Code:</b>\n{part['content']}", # content đã được định dạng <code>
                         parse_mode="HTML",
                         reply_markup=part["markup"], # Markup riêng cho nút copy code
-                        reply_to_message_id=message.message_id if not sent_messages and len(current_message_text.strip()) <= len(f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n") else None # Reply to original message if this is the very first content
+                        reply_to_message_id=message.message_id if not sent_messages and msg_status else None # Reply to original if this is the very first content
                     )
                     sent_messages.append(sent_code_msg.message_id)
                 except telebot.apihelper.ApiTelegramException as e:
@@ -834,53 +849,42 @@ def ask_command(message):
         # Gửi phần văn bản cuối cùng nếu còn (hoặc nếu toàn bộ là văn bản)
         if len(current_message_text.strip()) > 0: # Kiểm tra xem có văn bản thực sự để gửi không
             try:
-                # Nếu không có tin nhắn nào được gửi trước đó (nghĩa là toàn bộ phản hồi là văn bản hoặc chỉ một khối văn bản lớn)
-                if not sent_messages:
+                if msg_status: # Nếu tin nhắn status ban đầu vẫn còn và chưa bị edit/gửi thay thế
                     bot.edit_message_text(
                         current_message_text,
                         msg_status.chat.id,
                         msg_status.message_id,
                         parse_mode="HTML",
-                        reply_markup=combined_markup # Thêm markup chung vào tin nhắn này
+                        reply_markup=final_markup_to_send # Thêm markup chung vào tin nhắn này
                     )
-                else: # Đã có các tin nhắn khác được gửi, đây là tin nhắn bổ sung
+                else: # Đã có các tin nhắn khác được gửi (ví dụ: code block), đây là tin nhắn bổ sung
                     bot.send_message(
                         message.chat.id,
                         text=current_message_text,
                         parse_mode="HTML",
-                        reply_markup=combined_markup # Thêm markup chung vào tin nhắn cuối cùng này
+                        reply_markup=final_markup_to_send # Thêm markup chung vào tin nhắn cuối cùng này
                     )
             except telebot.apihelper.ApiTelegramException as edit_e:
-                logging.warning(f"Failed to edit message {msg_status.message_id} with final text: {edit_e}. Sending new message instead.")
+                logging.warning(f"Failed to edit/send final text message: {edit_e}. Sending new message instead.")
                 send_message_robustly(
                     message.chat.id,
                     text=current_message_text,
                     parse_mode="HTML",
-                    reply_markup=combined_markup
+                    reply_markup=final_markup_to_send
                 )
         else: # Nếu không còn văn bản sau khi gửi code blocks, và đã có tin nhắn được gửi (sent_messages không rỗng), thì chỉ cần xóa tin trạng thái ban đầu.
-            if sent_messages: # Đã gửi ít nhất một tin nhắn (có thể là code block)
+            if msg_status: # Nếu tin nhắn status ban đầu vẫn còn (chưa bị xóa/edit)
                 try:
                     bot.delete_message(msg_status.chat.id, msg_status.message_id)
                 except telebot.apihelper.ApiTelegramException as e:
                     logging.warning(f"Failed to delete status message {msg_status.message_id}: {e}")
-            else: # Trường hợp đặc biệt: AI trả về rỗng hoặc chỉ có khoảng trắng, không có gì để gửi
-                try:
-                    bot.edit_message_text(
-                        f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n<b>Không có nội dung phản hồi từ AI.</b>",
-                        msg_status.chat.id,
-                        msg_status.message_id,
-                        parse_mode="HTML",
-                        reply_markup=main_markup # Vẫn giữ các nút chung
-                    )
-                except telebot.apihelper.ApiTelegramException as edit_e:
-                    logging.warning(f"Failed to edit message {msg_status.message_id} with 'no content' msg: {edit_e}. Sending new message.")
-                    send_message_robustly(
-                        message.chat.id,
-                        text=f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n<b>Không có nội dung phản hồi từ AI.</b>",
-                        parse_mode="HTML",
-                        reply_markup=main_markup
-                    )
+            elif not sent_messages: # Trường hợp đặc biệt: AI trả về rỗng hoặc chỉ có khoảng trắng, không có gì để gửi
+                send_message_robustly(
+                    message.chat.id,
+                    text=f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n<b>Không có nội dung phản hồi từ AI.</b>",
+                    parse_mode="HTML",
+                    reply_markup=final_markup_to_send
+                )
 
 # --- NÚT CALLBACK ---
 
@@ -904,10 +908,11 @@ def retry_button(call):
         bot.answer_callback_query(call.id, "🔁 Đang thử lại câu hỏi...")
         # Cập nhật tin nhắn ban đầu thành "🤖" để cho thấy đang xử lý
         try:
+            # Cố gắng edit tin nhắn chứa nút retry
             bot.edit_message_text("🤖 Đang xử lý lại...", call.message.chat.id, call.message.message_id)
         except telebot.apihelper.ApiTelegramException as e:
             logging.warning(f"Failed to edit message {call.message.message_id} on retry: {e}. Sending new 'thinking' message.")
-            bot.send_message(call.message.chat.id, "🤖 Đang xử lý lại...") # Send new message if edit fails
+            bot.send_message(call.message.chat.id, "🤖 Đang xử lý lại...", reply_to_message_id=call.message.message_id)
 
         ask_command(msg)
     except Exception as e:
@@ -980,9 +985,17 @@ if __name__ == "__main__":
         webhook_info = bot.get_webhook_info()
         current_webhook_url = f"{APP_URL}/{TOKEN}"
         if webhook_info.url != current_webhook_url:
+            logging.info(f"Webhook hiện tại ({webhook_info.url}) không khớp với URL mong muốn ({current_webhook_url}). Đang xóa và đặt lại webhook.")
             bot.remove_webhook()
+            time.sleep(1) # Chờ một chút để Telegram xử lý việc xóa webhook
             bot.set_webhook(url=current_webhook_url)
             logging.info(f"Webhook đã được đặt tới: {current_webhook_url}")
-        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+        else:
+            logging.info(f"Webhook đã được đặt chính xác tới: {current_webhook_url}")
+
+        # Ensure that the port is an integer
+        port = int(os.environ.get("PORT", 10000))
+        app.run(host="0.0.0.0", port=port)
     except Exception as e:
         logging.critical(f"Lỗi nghiêm trọng khi khởi động bot: {e}")
+
