@@ -203,7 +203,8 @@ def help_command(message):
         "•  <code>/spamngl &lt;username&gt; &lt;tin_nhắn&gt; &lt;số_lần&gt;</code> - Spam Ngl.\n"
         "•  <code>/noti &lt;nội dung&gt;</code> - <i>(Chỉ Admin)</i> Gửi thông báo.\n"
         "•  <code>/sever</code> - <i>(Chỉ Admin)</i> Sever Bot.\n"
-        "•  <code>/tuongtac</code> - Xem tổng số lượt tương tác của bot."
+        "•  <code>/tuongtac</code> - Xem tổng số lượt tương tác của bot.\n"
+        "•  <code>/phanhoi</code> - Gửi Phản Hồi Lỗi Hoặc Chức Năng Cần Cải Tiến."
     )
     bot.send_photo(
         chat_id=message.chat.id,
