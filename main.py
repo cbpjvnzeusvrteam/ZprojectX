@@ -47,17 +47,26 @@ bot.feedback_messages = {}
 interaction_count = 0
 
 # --- Cấu hình Requests với Retry và Timeout chung ---
+# Quan trọng: Giảm số lần retry hoặc loại bỏ retry cho các lỗi timeout/kết nối nếu muốn bỏ qua nhanh
+# Đối với yêu cầu 'chỉ 1 lần và bỏ qua', chúng ta sẽ quản lý timeout/retry ở từng lệnh cụ thể nếu cần.
+# Giữ lại adapter với Retry cho tính ổn định chung của session, nhưng NGL sẽ xử lý timeout riêng.
 session = requests.Session()
-retries = Retry(total=5, backoff_factor=1, status_forcelist=[502, 503, 504], allowed_methods=frozenset(['GET', 'POST']))
+retries = Retry(total=3, backoff_factor=1, status_forcelist=[502, 503, 504]) # Giảm retry tổng thể
 adapter = HTTPAdapter(max_retries=retries)
 session.mount("https://", adapter)
-session.mount("http://", adapter) # Thêm cả http nếu có request http
-DEFAULT_TIMEOUT = 30 # Đặt timeout mặc định là 30 giây cho tất cả các request
+session.mount("http://", adapter)
 
-# Ghi đè phương thức request để áp dụng timeout mặc định
+DEFAULT_TIMEOUT_GLOBAL = 30 # Timeout mặc định cho các request khác
+NGL_REQUEST_TIMEOUT = 15 # Timeout riêng cho NGL (có thể đặt ngắn hơn để bỏ qua nhanh)
+
+# Ghi đè phương thức request để áp dụng timeout mặc định, nhưng NGL sẽ dùng timeout riêng
 class TimeoutSession(requests.Session):
     def request(self, method, url, **kwargs):
-        kwargs.setdefault('timeout', DEFAULT_TIMEOUT)
+        # Apply NGL_REQUEST_TIMEOUT if it's an NGL URL, otherwise use DEFAULT_TIMEOUT_GLOBAL
+        if "zeusvr.x10.mx/ngl" in url:
+            kwargs.setdefault('timeout', NGL_REQUEST_TIMEOUT)
+        else:
+            kwargs.setdefault('timeout', DEFAULT_TIMEOUT_GLOBAL)
         return super(TimeoutSession, self).request(method, url, **kwargs)
 
 session = TimeoutSession()
@@ -117,7 +126,8 @@ def sync_chat_to_server(chat):
             "title": getattr(chat, "title", ""),
             "username": getattr(chat, "username", "")
         }
-        response = session.post("https://zcode.x10.mx/apizproject.php", json=payload) # Sử dụng session với timeout mặc định
+        # Dùng DEFAULT_TIMEOUT_GLOBAL cho request này
+        response = session.post("https://zcode.x10.mx/apizproject.php", json=payload, timeout=DEFAULT_TIMEOUT_GLOBAL)
         response.raise_for_status()
         logging.info(f"Synced chat {chat.id} to server")
     except Exception as e:
@@ -128,7 +138,8 @@ def update_id_list_loop():
     global USER_IDS, GROUP_INFOS
     while True:
         try:
-            response = session.get("https://zcode.x10.mx/group-idchat.json") # Sử dụng session với timeout mặc định
+            # Dùng DEFAULT_TIMEOUT_GLOBAL cho request này
+            response = session.get("https://zcode.x10.mx/group-idchat.json", timeout=DEFAULT_TIMEOUT_GLOBAL)
             response.raise_for_status()
             data = response.json()
             new_users = set(data.get("users", []))
@@ -307,7 +318,8 @@ def send_noti(message):
 @bot.message_handler(commands=["spamngl"])
 @increment_interaction_count
 def spam_ngl_command(message):
-    """Xử lý lệnh /spamngl để gửi tin nhắn ẩn danh tới NGL."""
+    """Xử lý lệnh /spamngl để gửi tin nhắn ẩn danh tới NGL.
+       Khi lỗi, sẽ bỏ qua lệnh này cho người dùng hiện tại và đợi lệnh mới."""
     sync_chat_to_server(message.chat)
 
     args = message.text.split(maxsplit=3)
@@ -330,8 +342,9 @@ def spam_ngl_command(message):
     ngl_api_url = f"https://zeusvr.x10.mx/ngl?api-key=dcbfree&username={username}&tinnhan={tinnhan}&solan={solan}"
 
     try:
-        response = session.get(ngl_api_url) # Sử dụng session với timeout mặc định
-        response.raise_for_status()
+        # Sử dụng session đã cấu hình NGL_REQUEST_TIMEOUT, không cần timeout= ở đây nữa
+        response = session.get(ngl_api_url) 
+        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
         data = response.json()
 
         if data.get("status") == "success":
@@ -351,27 +364,30 @@ def spam_ngl_command(message):
                 photo=NGL_SUCCESS_IMAGE_URL,
                 caption=reply_text,
                 parse_mode="HTML",
-                reply_to_message_id=message.message_id # Đảm bảo reply lại tin nhắn người dùng
+                reply_to_message_id=message.message_id
             )
         else:
             error_message = data.get("message", "Có lỗi xảy ra khi gọi API NGL.")
             bot.reply_to(message, f"❌ Lỗi NGL API: {error_message}", parse_mode="HTML")
 
     except requests.exceptions.ReadTimeout as e:
-        logging.error(f"Lỗi timeout khi gọi NGL API: {e}")
-        bot.reply_to(message, f"❌ Lỗi timeout: API NGL không phản hồi kịp thời. Vui lòng thử lại sau.", parse_mode="HTML")
+        logging.error(f"Lỗi timeout khi gọi NGL API cho người dùng {message.from_user.id}: {e}")
+        bot.reply_to(message, "❌ Lỗi: API NGL không phản hồi kịp thời. Vui lòng thử lại sau.", parse_mode="HTML")
+        # Lệnh này sẽ được bỏ qua cho người dùng hiện tại, bot sẵn sàng nhận lệnh mới.
     except requests.exceptions.ConnectionError as e:
-        logging.error(f"Lỗi kết nối khi gọi NGL API: {e}")
+        logging.error(f"Lỗi kết nối khi gọi NGL API cho người dùng {message.from_user.id}: {e}")
         bot.reply_to(message, f"❌ Lỗi kết nối đến NGL API: Không thể kết nối đến máy chủ. Vui lòng kiểm tra lại sau.", parse_mode="HTML")
+        # Lệnh này sẽ được bỏ qua cho người dùng hiện tại, bot sẵn sàng nhận lệnh mới.
     except requests.exceptions.RequestException as e:
-        logging.error(f"Lỗi chung khi gọi NGL API: {e}")
-        bot.reply_to(message, f"❌ Lỗi khi gọi NGL API: <code>{e}</code>", parse_mode="HTML")
+        logging.error(f"Lỗi HTTP (4xx/5xx) hoặc request khác khi gọi NGL API cho người dùng {message.from_user.id}: {e}")
+        bot.reply_to(message, f"❌ Lỗi khi gọi NGL API: Đã có lỗi xảy ra từ máy chủ NGL. Chi tiết: <code>{e}</code>", parse_mode="HTML")
     except ValueError as e:
-        logging.error(f"Lỗi phân tích JSON từ NGL API: {e}")
-        bot.reply_to(message, "❌ Lỗi: Phản hồi API không hợp lệ.", parse_mode="HTML")
+        logging.error(f"Lỗi phân tích JSON từ NGL API cho người dùng {message.from_user.id}: {e}")
+        bot.reply_to(message, "❌ Lỗi: Phản hồi API NGL không hợp lệ.", parse_mode="HTML")
     except Exception as e:
-        logging.error(f"Lỗi không xác định khi xử lý /spamngl: {e}")
-        bot.reply_to(message, f"❌ Đã xảy ra lỗi không mong muốn: <code>{e}</code>", parse_mode="HTML")
+        logging.error(f"Lỗi không xác định khi xử lý /spamngl cho người dùng {message.from_user.id}: {e}")
+        bot.reply_to(message, f"❌ Đã xảy ra lỗi không mong muốn khi xử lý lệnh spam NGL: <code>{e}</code>", parse_mode="HTML")
+
 
 @bot.message_handler(commands=["phanhoi"])
 @increment_interaction_count
@@ -515,8 +531,8 @@ def ask_command(message):
     memory = load_user_memory(user_id)
 
     try:
-        # Sử dụng session với timeout mặc định
-        prompt_data = session.get(REMOTE_PROMPT_URL).json()
+        # Sử dụng session với DEFAULT_TIMEOUT_GLOBAL
+        prompt_data = session.get(REMOTE_PROMPT_URL, timeout=DEFAULT_TIMEOUT_GLOBAL).json()
         system_prompt = prompt_data.get("prompt", "Bạn là AI thông minh và hữu ích.")
     except Exception as e:
         logging.error(f"Lỗi tải prompt từ xa: {e}")
@@ -557,8 +573,8 @@ def ask_command(message):
 
     data = {"contents": [{"parts": parts}]}
     try:
-        # Sử dụng session với timeout mặc định
-        res = session.post(GEMINI_URL, headers=headers, json=data)
+        # Sử dụng session với DEFAULT_TIMEOUT_GLOBAL
+        res = session.post(GEMINI_URL, headers=headers, json=data, timeout=DEFAULT_TIMEOUT_GLOBAL)
         res.raise_for_status()
         result = res.json()["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
@@ -580,11 +596,12 @@ def ask_command(message):
     save_user_memory(user_id, memory)
 
     try:
-        # Sử dụng session với timeout mặc định
+        # Sử dụng session với DEFAULT_TIMEOUT_GLOBAL
         session.post(
             f"{REMOTE_LOG_HOST}?uid={user_id}",
             data=json.dumps(memory, ensure_ascii=False),
-            headers={"Content-Type": "application/json"}
+            headers={"Content-Type": "application/json"},
+            timeout=DEFAULT_TIMEOUT_GLOBAL
         )
     except Exception as e:
         logging.error(f"Lỗi gửi log từ xa: {e}")
