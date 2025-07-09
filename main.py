@@ -9,6 +9,9 @@ import json
 from datetime import datetime
 from io import BytesIO
 from PIL import Image # Đảm bảo Pillow được cài đặt nếu dùng chức năng ảnh
+import random
+import string
+import threading # Thêm import này cho auto_delete_email
 
 from flask import Flask, request
 from threading import Thread
@@ -94,7 +97,7 @@ REMOTE_LOG_HOST = "https://zcode.x10.mx/save.php"
 
 # --- URL ảnh dùng trong bot ---
 NGL_SUCCESS_IMAGE_URL = "https://i.ibb.co/fV1srXJ8/9885878c-2a4b-4246-ae2e-fda17d735e2d.jpg"
-START_IMAGE_URL = "https://i.ibb.co/MkQ2pTjv/ca68c4b2-60dc-4eb1-9a20-ebf2cc5c557f.jpg"
+START_IMAGE_URL = "https://i.ibb.co/MkQ2pTjv/ca68c4b2-60dc-4eb1-9a20-ebf2cc5c577f.jpg"
 NOTI_IMAGE_URL = "https://i.ibb.co/QvrB4zMB/ca68c4b2-2a4b-4246-ae2e-fda17d735e2d.jpg"
 TUONGTAC_IMAGE_URL = "https://i.ibb.co/YF4yRCBP/1751301092916.png"
 
@@ -251,6 +254,7 @@ def build_reply_button(user_id, question, reply_id=None):
 def increment_interaction_count(func):
     def wrapper(message, *args, **kwargs):
         global interaction_count
+        interaction_count += 1 # Tăng số lượt tương tác
         return func(message, *args, **kwargs)
     return wrapper
 
@@ -304,7 +308,6 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
 @increment_interaction_count
 def start_cmd(message):
     """Xử lý lệnh /start, hiển thị thông tin bot và các liên kết."""
-    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     markup = InlineKeyboardMarkup()
     markup.add(
@@ -329,7 +332,6 @@ def start_cmd(message):
 @increment_interaction_count
 def help_command(message):
     """Xử lý lệnh /help, hiển thị menu các lệnh."""
-    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     help_text = (
         "<b>📚 Menu Lệnh ZProject Bot</b>\n\n"
@@ -357,7 +359,6 @@ def help_command(message):
 @increment_interaction_count
 def time_cmd(message):
     """Xử lý lệnh /time, hiển thị thời gian hoạt động của bot."""
-    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     now = time.time()
     seconds = int(now - START_TIME)
@@ -376,7 +377,6 @@ def time_cmd(message):
 @increment_interaction_count
 def tuongtac_command(message):
     """Xử lý lệnh /tuongtac, hiển thị tổng số lượt tương tác của bot."""
-    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     
     reply_text = (
@@ -398,7 +398,6 @@ def tuongtac_command(message):
 @increment_interaction_count
 def send_noti(message):
     """Xử lý lệnh /noti, cho phép Admin gửi thông báo kèm ảnh (tùy chọn) tới tất cả người dùng/nhóm."""
-    interaction_count += 1 # Tăng số lượt tương tác
     if message.from_user.id != ADMIN_ID:
         return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
@@ -454,7 +453,6 @@ def send_noti(message):
 def spam_ngl_command(message):
     """Xử lý lệnh /ngl để gửi tin nhắn ẩn danh tới NGL.
        Khi lỗi, sẽ bỏ qua lệnh này cho người dùng hiện tại và đợi lệnh mới."""
-    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
 
     args = message.text.split(maxsplit=3)
@@ -523,7 +521,6 @@ def spam_ngl_command(message):
 @increment_interaction_count
 def send_feedback_to_admin(message):
     """Xử lý lệnh /phanhoi, cho phép người dùng gửi phản hồi đến admin."""
-    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     feedback_text = message.text.replace("/phanhoi", "").strip()
 
@@ -576,7 +573,6 @@ def send_feedback_to_admin(message):
 @increment_interaction_count
 def admin_reply_to_feedback(message):
     """Xử lý lệnh /adminph, cho phép admin phản hồi lại người dùng đã gửi feedback."""
-    interaction_count += 1 # Tăng số lượt tương tác
     if message.from_user.id != ADMIN_ID:
         return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
@@ -626,7 +622,6 @@ def admin_reply_to_feedback(message):
 @increment_interaction_count
 def show_groups(message):
     """Xử lý lệnh /sever, hiển thị danh sách các nhóm bot đang tham gia (chỉ Admin)."""
-    interaction_count += 1 # Tăng số lượt tương tác
     if message.from_user.id != ADMIN_ID:
         return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
     if not GROUP_INFOS:
@@ -643,7 +638,6 @@ def show_groups(message):
 @bot.message_handler(commands=['mail10p'])
 @increment_interaction_count
 def handle_mail10p(message):
-    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     user_id = message.chat.id
     
@@ -758,7 +752,6 @@ def _get_inbox_content(user_id):
 @bot.message_handler(commands=['hopthu'])
 @increment_interaction_count
 def handle_hopthu(message):
-    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     user_id = message.chat.id
     
@@ -829,7 +822,6 @@ def copy_code_button(call):
 @increment_interaction_count
 def ask_command(message):
     """Xử lý lệnh /ask để gửi câu hỏi đến Gemini AI. Hỗ trợ hỏi kèm ảnh."""
-    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     prompt = message.text.replace("/ask", "").strip()
     if not prompt:
@@ -1233,9 +1225,9 @@ def back_to_mail_info_button(call):
     info = user_data.get(user_id)
 
     if not info:
-        text = "❌ Bạn chưa tạo email. Gõ /mail10p để tạo nhé!"
+        text = "<i>❌ Bạn chưa tạo email. Gõ /mail10p để tạo nhé!</i>"
         markup = None
-        parse_mode = 'Markdown'
+        parse_mode = 'HTML'
     else:
         elapsed_time = int(time.time() - info["created_at"])
         remaining_time = 600 - elapsed_time
@@ -1243,17 +1235,17 @@ def back_to_mail_info_button(call):
             minutes = remaining_time // 60
             seconds = remaining_time % 60
             text = (
-                f"✅ Mail 10 phút của bạn là:\n"
-                f"📧 `{info['email']}`\n"
-                f"⏰ Hết hạn sau {minutes} phút {seconds} giây."
+                f"<blockquote>✅ Mail 10 phút của bạn là:\n"
+                f"<code>📧 `{info['email']}`</code>\n"
+                f"⏰ Hết hạn sau {minutes} phút {seconds} giây.</blockquote>"
             )
             markup = build_mail_buttons(user_id, 'mail_info')
-            parse_mode = 'Markdown'
+            parse_mode = 'HTML'
         else:
             del user_data[user_id]
             text = "⏰ Mail 10 phút của bạn đã hết hạn! Vui lòng tạo mail mới bằng lệnh /mail10p."
             markup = None
-            parse_mode = 'Markdown'
+            parse_mode = 'HTML'
     
     try:
         bot.edit_message_text(
