@@ -130,7 +130,7 @@ class gTTS:
 # --- Các hàm hỗ trợ cho chức năng Mail.tm ---
 
 # Tạo chuỗi ngẫu nhiên
-def random_string(length=5):
+def random_string(length=3):
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
 # Tự động xóa email sau 10 phút
@@ -158,7 +158,7 @@ def create_temp_mail():
     if not domain:
         return None, None, None
 
-    email = f"zprojectXBot_{random_string()}@{domain}"
+    email = f"zproject_{random_string()}@{domain}"
     password = random_string(12)
 
     try:
@@ -1236,7 +1236,7 @@ def back_to_mail_info_button(call):
             seconds = remaining_time % 60
             text = (
                 f"<blockquote>✅ Mail 10 phút của bạn là:\n"
-                f"<code>📧 `{info['email']}`</code>\n"
+                f"<code>📧 {info['email']}</code>\n"
                 f"⏰ Hết hạn sau {minutes} phút {seconds} giây.</blockquote>"
             )
             markup = build_mail_buttons(user_id, 'mail_info')
