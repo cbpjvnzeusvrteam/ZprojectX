@@ -1187,7 +1187,7 @@ def check_mail_owner(call, expected_user_id):
     """Kiểm tra xem người nhấn nút có phải là người đã tạo mail không."""
     # Chuyển expected_user_id sang int để so sánh chính xác
     if call.from_user.id != int(expected_user_id):
-        bot.answer_callback_query(call.id, "🚫 Bạn không phải người yêu cầu lệnh này.", show_alert=True)
+        bot.answer_callback_query(call.id, "🚫 Chat Riêng Với Bot Để Dùng Chức Năng Mail10p .", show_alert=True)
         return False
     return True
 
