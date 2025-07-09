@@ -137,6 +137,17 @@ def random_string(length=3):
 def auto_delete_email(user_id):
     time.sleep(600)  # 10 phút
     if user_id in user_data:
+        # THỰC HIỆN XÓA TÀI KHOẢN TRÊN MAIL.TM NẾU CÓ THỂ
+        # Ví dụ (cần lưu account_id và token vào user_data khi tạo mail):
+        # try:
+        #     account_info = user_data[user_id]
+        #     if 'account_id' in account_info and 'token' in account_info:
+        #         headers = {"Authorization": f"Bearer {account_info['token']}"}
+        #         session.delete(f"https://api.mail.tm/accounts/{account_info['account_id']}", headers=headers)
+        #         logging.info(f"Đã xóa tài khoản Mail.tm: {account_info['email']}")
+        # except Exception as e:
+        #     logging.error(f"Lỗi khi xóa tài khoản Mail.tm cho user {user_id}: {e}")
+
         del user_data[user_id]
         send_message_robustly(user_id, "⏰ Mail 10 phút của bạn đã hết hạn!")
 
@@ -147,9 +158,16 @@ def get_domain():
         r = session.get("https://api.mail.tm/domains")
         r.raise_for_status() # Kiểm tra lỗi HTTP
         domains = r.json()["hydra:member"]
-        return domains[0]["domain"] if domains else None
-    except Exception as e:
+        # Lọc các domain có isActive = True
+        active_domains = [d for d in domains if d.get('isActive', False)]
+        if active_domains:
+            return random.choice(active_domains)["domain"] # Chọn ngẫu nhiên một domain
+        return None
+    except requests.exceptions.RequestException as e: # Bắt lỗi requests cụ thể
         logging.error(f"Lỗi khi lấy domain từ Mail.tm: {e}")
+        return None
+    except Exception as e: # Bắt các lỗi khác
+        logging.error(f"Lỗi không xác định khi lấy domain từ Mail.tm: {e}")
         return None
 
 # Đăng ký và lấy token
@@ -345,7 +363,8 @@ def help_command(message):
         "•  <code>/tuongtac</code> - Xem tổng số lượt tương tác của bot.\n"
         "•  <code>/phanhoi</code> - Gửi Phản Hồi Lỗi Hoặc Chức Năng Cần Cải Tiến.\n"
         "•  <code>/mail10p</code> - Tạo mail 10 phút dùng 1 lần.\n"
-        "•  <code>/hopthu</code> - Xem hộp thư của mail 10 phút đã tạo."
+        "•  <code>/hopthu</code> - Xem hộp thư của mail 10 phút đã tạo.\n"
+        "•  <code>/xoamail10p</code> - Xóa mail 10 phút hiện tại của bạn." # Thêm lệnh mới
     )
     send_message_robustly(
         chat_id=message.chat.id,
@@ -701,18 +720,55 @@ def handle_mail10p(message):
     else:
         send_message_robustly(message.chat.id, "❌ Không thể tạo email. Vui lòng thử lại sau!", parse_mode='Markdown', reply_to_message_id=message.message_id)
 
+# Lệnh mới để xóa mail 10 phút
+@bot.message_handler(commands=['xoamail10p'])
+@increment_interaction_count
+def handle_xoamail10p(message):
+    sync_chat_to_server(message.chat)
+    user_id = message.chat.id
+
+    if user_id in user_data:
+        # Xóa tài khoản Mail.tm nếu có thể (thêm logic gọi API Mail.tm nếu có account_id)
+        # Ví dụ:
+        # try:
+        #     account_info = user_data[user_id]
+        #     if 'account_id' in account_info and 'token' in account_info:
+        #         headers = {"Authorization": f"Bearer {account_info['token']}"}
+        #         session.delete(f"https://api.mail.tm/accounts/{account_info['account_id']}", headers=headers)
+        #         logging.info(f"Đã xóa tài khoản Mail.tm: {account_info['email']}")
+        # except Exception as e:
+        #     logging.error(f"Lỗi khi xóa tài khoản Mail.tm cho user {user_id}: {e}")
+
+        del user_data[user_id]
+        send_message_robustly(message.chat.id, "<i>🗑️ Mail 10 phút của bạn đã được xóa thành công!</i>", parse_mode='HTML', reply_to_message_id=message.message_id)
+    else:
+        send_message_robustly(message.chat.id, "<i>⚠️ Bạn không có mail 10 phút nào đang hoạt động để xóa.<i>", parse_mode='HTML', reply_to_message_id=message.message_id)
+
+
 # Hàm nội bộ để lấy nội dung hộp thư và tạo markup
 def _get_inbox_content(user_id):
     info = user_data.get(user_id)
 
     if not info:
-        return "❌ Bạn chưa tạo email. Gõ /mail10p để tạo nhé!", None, 'Markdown'
+        return "<i>❌ Bạn chưa tạo email. Gõ /mail10p để tạo nhé!</i>", None, 'HTML'
 
     # Kiểm tra xem mail đã hết hạn chưa
     elapsed_time = int(time.time() - info["created_at"])
     if elapsed_time >= 600: # 10 phút
+        # Lấy thông tin email trước khi xóa
+        expired_mail_address = info.get('address', 'không xác định')
+        
         del user_data[user_id]
-        return "⏰ Mail 10 phút của bạn đã hết hạn! Vui lòng tạo mail mới bằng lệnh /mail10p.", None, 'Markdown'
+        # Thông báo mail hết hạn với địa chỉ mail cụ thể và thông tin về thư
+        # Sử dụng parser_mode HTML và tag người dùng (giả định cách tag với ID)
+        reply_text = (
+            f"⏰ <b>Mail <code>{expired_mail_address}</code> của bạn đã hết hạn!</b> "
+            f"<blockquote>Tất cả thư của mail này sẽ bị xóa.</blockquote> "
+            f"Vui lòng tạo mail mới bằng lệnh /mail10p."
+        )
+        # Nếu bạn muốn tag người dùng cụ thể, bạn cần có username hoặc full name của họ.
+        # Ví dụ: f"<a href='tg://user?id={user_id}'>Người dùng của bạn</a>"
+        return reply_text, None, 'HTML'
 
     headers = {
         "Authorization": f"Bearer {info['token']}"
@@ -747,6 +803,7 @@ def _get_inbox_content(user_id):
     except Exception as e:
         logging.error(f"Lỗi khi kiểm tra hộp thư Mail.tm cho user {user_id}: {e}")
         return "❌ Lỗi khi kiểm tra hộp thư. Vui lòng thử lại sau.", None, 'Markdown'
+
 
 # Lệnh kiểm tra hộp thư (vẫn giữ để dùng lệnh /hopthu)
 @bot.message_handler(commands=['hopthu'])
@@ -1128,7 +1185,8 @@ def tts_button(call):
 
 def check_mail_owner(call, expected_user_id):
     """Kiểm tra xem người nhấn nút có phải là người đã tạo mail không."""
-    if str(call.from_user.id) != expected_user_id:
+    # Chuyển expected_user_id sang int để so sánh chính xác
+    if call.from_user.id != int(expected_user_id):
         bot.answer_callback_query(call.id, "🚫 Bạn không phải người yêu cầu lệnh này.", show_alert=True)
         return False
     return True
@@ -1308,4 +1366,3 @@ if __name__ == "__main__":
         app.run(host="0.0.0.0", port=port)
     except Exception as e:
         logging.critical(f"Lỗi nghiêm trọng khi khởi động bot: {e}")
-
