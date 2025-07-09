@@ -30,11 +30,11 @@ logging.basicConfig(
 
 # --- Cấu hình chung ---
 # Lấy BOT_TOKEN từ biến môi trường, hoặc dùng giá trị mặc định nếu không có (chỉ để phát triển)
-TOKEN = os.environ.get("BOT_TOKEN", "7539540916:AAENFBF2B2dyXLITmEC2ccgLYim2t9vxOQk")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", 5819094246))
+TOKEN = os.environ.get("BOT_TOKEN", "5819094246:AAENFBF2B2dyXLITmEC2ccgLYim2t9vxOQk") # THAY BẰNG TOKEN BOT CỦA BẠN
+ADMIN_ID = int(os.environ.get("ADMIN_ID", 123456789)) # THAY BẰNG ID ADMIN CỦA BẠN
 
 # Đảm bảo APP_URL là URL thuần túy, không có Markdown
-APP_URL = os.environ.get("APP_URL", "https://zproject-111.onrender.com")
+APP_URL = os.environ.get("APP_URL", "https://zproject-111.onrender.com") # THAY BẰNG URL APP CỦA BẠN
 
 logging.info(f"APP_URL được cấu hình: {APP_URL}")
 
@@ -51,6 +51,12 @@ bot.feedback_messages = {}
 bot.code_snippets = {}
 # Lưu trữ các câu trả lời để chuyển thành voice
 bot.voice_map = {}
+
+# Lưu thông tin người dùng Mail.tm (email, mật khẩu, token, thời gian hết hạn)
+user_data = {}
+# Lưu trữ ID tin nhắn của bot để có thể chỉnh sửa sau này
+# mail_message_id: {chat_id, user_id, type: 'mail_info' hoặc 'inbox'}
+bot.mail_messages_state = {}
 
 
 # Biến toàn cục để đếm số lượt tương tác
@@ -81,7 +87,7 @@ session.mount("https://", adapter)
 session.mount("http://", adapter)
 
 # --- Cấu hình Gemini API và Prompt từ xa ---
-GEMINI_API_KEY = "AIzaSyDpmTfFibDyskBHwekOADtstWsPUCbIrzE"
+GEMINI_API_KEY = "AIzaSyDpmTfFibDyskBHwekOADtstWsPUCbIrzE" # THAY BẰNG KHÓA API GEMINI CỦA BẠN
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 REMOTE_PROMPT_URL = "https://zcode.x10.mx/prompt.json"
 REMOTE_LOG_HOST = "https://zcode.x10.mx/save.php"
@@ -117,6 +123,75 @@ class gTTS:
         logging.info(f"Dummy gTTS: Saving '{self.text[:50]}...' to {filename}")
         with open(filename, "wb") as f:
             f.write(b"dummy_audio_data")
+
+# --- Các hàm hỗ trợ cho chức năng Mail.tm ---
+
+# Tạo chuỗi ngẫu nhiên
+def random_string(length=10):
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+
+# Tự động xóa email sau 10 phút
+def auto_delete_email(user_id):
+    time.sleep(600)  # 10 phút
+    if user_id in user_data:
+        del user_data[user_id]
+        send_message_robustly(user_id, "⏰ Mail 10 phút của bạn đã hết hạn!")
+
+# Lấy domain có sẵn từ API mail.tm
+def get_domain():
+    # Sử dụng session đã cấu hình của ZProject bot
+    try:
+        r = session.get("https://api.mail.tm/domains")
+        r.raise_for_status() # Kiểm tra lỗi HTTP
+        domains = r.json()["hydra:member"]
+        return domains[0]["domain"] if domains else None
+    except Exception as e:
+        logging.error(f"Lỗi khi lấy domain từ Mail.tm: {e}")
+        return None
+
+# Đăng ký và lấy token
+def create_temp_mail():
+    domain = get_domain()
+    if not domain:
+        return None, None, None
+
+    email = f"{random_string()}@{domain}"
+    password = random_string(12)
+
+    try:
+        # Tạo tài khoản
+        r_acc = session.post("https://api.mail.tm/accounts", json={
+            "address": email,
+            "password": password
+        })
+        r_acc.raise_for_status()
+
+        # Đăng nhập để lấy token
+        r_token = session.post("https://api.mail.tm/token", json={
+            "address": email,
+            "password": password
+        })
+        r_token.raise_for_status()
+
+        token = r_token.json()['token']
+        return email, password, token
+    except Exception as e:
+        logging.error(f"Lỗi khi tạo/đăng nhập mail.tm: {e}")
+        return None, None, None
+
+# Hàm xây dựng các nút cho Mail.tm
+def build_mail_buttons(user_id, state):
+    markup = InlineKeyboardMarkup()
+    # Thêm user_id vào callback_data để kiểm tra quyền
+    if state == 'mail_info':
+        markup.row(InlineKeyboardButton("📩 Xem Hộp Thư", callback_data=f"mailtm_inbox|{user_id}"))
+    elif state == 'inbox':
+        markup.row(
+            InlineKeyboardButton("🔄 Làm Mới", callback_data=f"mailtm_refresh|{user_id}"),
+            InlineKeyboardButton("↩️ Quay Lại", callback_data=f"mailtm_back|{user_id}")
+        )
+    return markup
+
 
 # === Đồng bộ nhóm/người dùng từ API ===
 def sync_chat_to_server(chat):
@@ -176,7 +251,6 @@ def build_reply_button(user_id, question, reply_id=None):
 def increment_interaction_count(func):
     def wrapper(message, *args, **kwargs):
         global interaction_count
-        interaction_count += 1
         return func(message, *args, **kwargs)
     return wrapper
 
@@ -230,6 +304,7 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
 @increment_interaction_count
 def start_cmd(message):
     """Xử lý lệnh /start, hiển thị thông tin bot và các liên kết."""
+    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     markup = InlineKeyboardMarkup()
     markup.add(
@@ -254,6 +329,7 @@ def start_cmd(message):
 @increment_interaction_count
 def help_command(message):
     """Xử lý lệnh /help, hiển thị menu các lệnh."""
+    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     help_text = (
         "<b>📚 Menu Lệnh ZProject Bot</b>\n\n"
@@ -265,7 +341,9 @@ def help_command(message):
         "•  <code>/noti &lt;nội dung&gt;</code> - <i>(Chỉ Admin)</i> Gửi thông báo.\n"
         "•  <code>/sever</code> - <i>(Chỉ Admin)</i> Sever Bot.\n"
         "•  <code>/tuongtac</code> - Xem tổng số lượt tương tác của bot.\n"
-        "•  <code>/phanhoi</code> - Gửi Phản Hồi Lỗi Hoặc Chức Năng Cần Cải Tiến."
+        "•  <code>/phanhoi</code> - Gửi Phản Hồi Lỗi Hoặc Chức Năng Cần Cải Tiến.\n"
+        "•  <code>/mail10p</code> - Tạo mail 10 phút dùng 1 lần.\n"
+        "•  <code>/hopthu</code> - Xem hộp thư của mail 10 phút đã tạo."
     )
     send_message_robustly(
         chat_id=message.chat.id,
@@ -279,6 +357,7 @@ def help_command(message):
 @increment_interaction_count
 def time_cmd(message):
     """Xử lý lệnh /time, hiển thị thời gian hoạt động của bot."""
+    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     now = time.time()
     seconds = int(now - START_TIME)
@@ -297,6 +376,7 @@ def time_cmd(message):
 @increment_interaction_count
 def tuongtac_command(message):
     """Xử lý lệnh /tuongtac, hiển thị tổng số lượt tương tác của bot."""
+    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     
     reply_text = (
@@ -318,6 +398,7 @@ def tuongtac_command(message):
 @increment_interaction_count
 def send_noti(message):
     """Xử lý lệnh /noti, cho phép Admin gửi thông báo kèm ảnh (tùy chọn) tới tất cả người dùng/nhóm."""
+    interaction_count += 1 # Tăng số lượt tương tác
     if message.from_user.id != ADMIN_ID:
         return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
@@ -373,6 +454,7 @@ def send_noti(message):
 def spam_ngl_command(message):
     """Xử lý lệnh /ngl để gửi tin nhắn ẩn danh tới NGL.
        Khi lỗi, sẽ bỏ qua lệnh này cho người dùng hiện tại và đợi lệnh mới."""
+    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
 
     args = message.text.split(maxsplit=3)
@@ -441,6 +523,7 @@ def spam_ngl_command(message):
 @increment_interaction_count
 def send_feedback_to_admin(message):
     """Xử lý lệnh /phanhoi, cho phép người dùng gửi phản hồi đến admin."""
+    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     feedback_text = message.text.replace("/phanhoi", "").strip()
 
@@ -493,6 +576,7 @@ def send_feedback_to_admin(message):
 @increment_interaction_count
 def admin_reply_to_feedback(message):
     """Xử lý lệnh /adminph, cho phép admin phản hồi lại người dùng đã gửi feedback."""
+    interaction_count += 1 # Tăng số lượt tương tác
     if message.from_user.id != ADMIN_ID:
         return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
@@ -542,6 +626,7 @@ def admin_reply_to_feedback(message):
 @increment_interaction_count
 def show_groups(message):
     """Xử lý lệnh /sever, hiển thị danh sách các nhóm bot đang tham gia (chỉ Admin)."""
+    interaction_count += 1 # Tăng số lượt tương tác
     if message.from_user.id != ADMIN_ID:
         return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
     if not GROUP_INFOS:
@@ -552,6 +637,141 @@ def show_groups(message):
         link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Không có link mời"
         text += f"📌 <b>{title}</b>\n{link}\n\n"
     send_message_robustly(message.chat.id, text=text, parse_mode="HTML", disable_web_page_preview=True, reply_to_message_id=message.message_id)
+
+
+# Lệnh tạo mail 10 phút
+@bot.message_handler(commands=['mail10p'])
+@increment_interaction_count
+def handle_mail10p(message):
+    interaction_count += 1 # Tăng số lượt tương tác
+    sync_chat_to_server(message.chat)
+    user_id = message.chat.id
+    
+    # Kiểm tra xem người dùng đã có mail chưa và còn thời gian không
+    if user_id in user_data:
+        elapsed_time = int(time.time() - user_data[user_id]["created_at"])
+        remaining_time = 600 - elapsed_time
+        if remaining_time > 0:
+            minutes = remaining_time // 60
+            seconds = remaining_time % 60
+            
+            # Gửi lại thông tin mail kèm nút "Xem Hộp Thư"
+            mail_info_text = (
+                f"⚠️ Bạn đã có một mail 10 phút rồi:\n"
+                f"📧 `{user_data[user_id]['email']}`\n"
+                f"⏰ Mail này sẽ hết hạn sau {minutes} phút {seconds} giây."
+            )
+            markup = build_mail_buttons(user_id, 'mail_info')
+            
+            sent_msg = send_message_robustly(message.chat.id, 
+                                            text=mail_info_text,
+                                            parse_mode='Markdown',
+                                            reply_markup=markup,
+                                            reply_to_message_id=message.message_id)
+            if sent_msg:
+                bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'mail_info'}
+            return
+        else:
+            # Nếu hết hạn nhưng chưa bị xóa, xóa nó đi
+            del user_data[user_id]
+            send_message_robustly(message.chat.id, "⏰ Mail 10 phút của bạn đã hết hạn, đang tạo mail mới...", parse_mode='Markdown', reply_to_message_id=message.message_id)
+
+
+    email, pwd, token = create_temp_mail()
+
+    if email:
+        user_data[user_id] = {
+            "email": email,
+            "password": pwd,
+            "token": token,
+            "created_at": time.time()
+        }
+        
+        mail_info_text = (
+            f"✅ Mail 10 phút của bạn là:\n"
+            f"📧 `{email}`\n"
+            f"⏰ Hết hạn sau 10 phút."
+        )
+        markup = build_mail_buttons(user_id, 'mail_info')
+        
+        sent_msg = send_message_robustly(message.chat.id, 
+                                       text=mail_info_text, 
+                                       parse_mode='Markdown',
+                                       reply_markup=markup,
+                                       reply_to_message_id=message.message_id)
+        # Lưu trữ ID tin nhắn để có thể chỉnh sửa sau này
+        if sent_msg:
+            bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'mail_info'}
+        
+        threading.Thread(target=auto_delete_email, args=(user_id,)).start()
+    else:
+        send_message_robustly(message.chat.id, "❌ Không thể tạo email. Vui lòng thử lại sau!", parse_mode='Markdown', reply_to_message_id=message.message_id)
+
+# Hàm nội bộ để lấy nội dung hộp thư và tạo markup
+def _get_inbox_content(user_id):
+    info = user_data.get(user_id)
+
+    if not info:
+        return "❌ Bạn chưa tạo email. Gõ /mail10p để tạo nhé!", None, 'Markdown'
+
+    # Kiểm tra xem mail đã hết hạn chưa
+    elapsed_time = int(time.time() - info["created_at"])
+    if elapsed_time >= 600: # 10 phút
+        del user_data[user_id]
+        return "⏰ Mail 10 phút của bạn đã hết hạn! Vui lòng tạo mail mới bằng lệnh /mail10p.", None, 'Markdown'
+
+    headers = {
+        "Authorization": f"Bearer {info['token']}"
+    }
+
+    try:
+        r = session.get("https://api.mail.tm/messages", headers=headers)
+        r.raise_for_status() # Kiểm tra lỗi HTTP
+        messages = r.json().get("hydra:member", [])
+        
+        reply_text = ""
+        if not messages:
+            reply_text = "📭 Hộp thư của bạn hiện đang trống."
+        else:
+            reply_text = f"📥 Có {len(messages)} thư trong hộp thư:\n"
+            for msg in messages:
+                sender = msg['from']['address']
+                subject = msg['subject']
+                preview = msg['intro']
+                
+                sender_esc = html_escape(sender)
+                subject_esc = html_escape(subject)
+                preview_esc = html_escape(preview)
+
+                reply_text += f"\n👤 <b>Từ:</b> <code>{sender_esc}</code>\n" \
+                              f"✉️ <b>Chủ đề:</b> {subject_esc}\n" \
+                              f"📝 <b>Nội dung:</b> {preview_esc}\n"
+        
+        markup = build_mail_buttons(user_id, 'inbox')
+        return reply_text, markup, 'HTML'
+
+    except Exception as e:
+        logging.error(f"Lỗi khi kiểm tra hộp thư Mail.tm cho user {user_id}: {e}")
+        return "❌ Lỗi khi kiểm tra hộp thư. Vui lòng thử lại sau.", None, 'Markdown'
+
+# Lệnh kiểm tra hộp thư (vẫn giữ để dùng lệnh /hopthu)
+@bot.message_handler(commands=['hopthu'])
+@increment_interaction_count
+def handle_hopthu(message):
+    interaction_count += 1 # Tăng số lượt tương tác
+    sync_chat_to_server(message.chat)
+    user_id = message.chat.id
+    
+    text, markup, parse_mode = _get_inbox_content(user_id)
+    sent_msg = send_message_robustly(message.chat.id, 
+                                   text=text, 
+                                   parse_mode=parse_mode, 
+                                   reply_markup=markup,
+                                   reply_to_message_id=message.message_id)
+    if sent_msg:
+        # Nếu gửi tin nhắn mới, lưu trạng thái là inbox
+        bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'inbox'}
+
 
 # Hàm mới để định dạng đầu ra AI
 def format_ai_response_html(text):
@@ -609,6 +829,7 @@ def copy_code_button(call):
 @increment_interaction_count
 def ask_command(message):
     """Xử lý lệnh /ask để gửi câu hỏi đến Gemini AI. Hỗ trợ hỏi kèm ảnh."""
+    interaction_count += 1 # Tăng số lượt tương tác
     sync_chat_to_server(message.chat)
     prompt = message.text.replace("/ask", "").strip()
     if not prompt:
@@ -837,7 +1058,7 @@ def ask_command(message):
             send_message_robustly(message.chat.id, text=f"❌ Đã xảy ra lỗi khi gửi kết quả: {e}", parse_mode="HTML", reply_to_message_id=message.message_id)
 
 
-# --- NÚT CALLBACK ---
+# --- NÚT CALLBACK CỦA BOT ZPROJECT ---
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("retry|"))
 def retry_button(call):
@@ -910,6 +1131,155 @@ def tts_button(call):
     except Exception as e:
         bot.answer_callback_query(call.id, "⚠️ Lỗi khi tạo voice.", show_alert=True)
         logging.error(f"[TTS] Lỗi: {e}")
+
+# --- NÚT CALLBACK CỦA MAIL.TM ---
+
+def check_mail_owner(call, expected_user_id):
+    """Kiểm tra xem người nhấn nút có phải là người đã tạo mail không."""
+    if str(call.from_user.id) != expected_user_id:
+        bot.answer_callback_query(call.id, "🚫 Bạn không phải người yêu cầu lệnh này.", show_alert=True)
+        return False
+    return True
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("mailtm_inbox|"))
+def show_inbox_button(call):
+    user_id = call.message.chat.id
+    expected_user_id = call.data.split("|")[1]
+
+    if not check_mail_owner(call, expected_user_id):
+        return
+
+    bot.answer_callback_query(call.id, "Đang tải hộp thư...", show_alert=False)
+
+    text, markup, parse_mode = _get_inbox_content(user_id)
+
+    try:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=text,
+            parse_mode=parse_mode,
+            reply_markup=markup
+        )
+        # Cập nhật trạng thái tin nhắn
+        bot.mail_messages_state[call.message.message_id]['type'] = 'inbox'
+    except telebot.apihelper.ApiTelegramException as e:
+        if "message is not modified" in str(e):
+            logging.info(f"Message {call.message.message_id} in chat {call.message.chat.id} was not modified (inbox).")
+        else:
+            logging.error(f"Lỗi khi chỉnh sửa tin nhắn thành hộp thư cho user {user_id}: {e}")
+            send_message_robustly(call.message.chat.id, text=text, parse_mode=parse_mode, reply_markup=markup)
+            # Xóa trạng thái cũ và thêm trạng thái mới
+            if call.message.message_id in bot.mail_messages_state:
+                del bot.mail_messages_state[call.message.message_id]
+            sent_msg = send_message_robustly(call.message.chat.id, "❌ Đã có lỗi khi cập nhật hộp thư. Đây là tin nhắn mới.", parse_mode="HTML")
+            if sent_msg:
+                bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'inbox'}
+            
+    except Exception as e:
+        logging.error(f"Lỗi không xác định khi xem hộp thư: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Lỗi khi xem hộp thư!", show_alert=True)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("mailtm_refresh|"))
+def refresh_inbox_button(call):
+    user_id = call.message.chat.id
+    expected_user_id = call.data.split("|")[1]
+
+    if not check_mail_owner(call, expected_user_id):
+        return
+
+    bot.answer_callback_query(call.id, "Đang làm mới hộp thư...", show_alert=False)
+
+    text, markup, parse_mode = _get_inbox_content(user_id)
+
+    try:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=text,
+            parse_mode=parse_mode,
+            reply_markup=markup
+        )
+        # Cập nhật trạng thái tin nhắn
+        bot.mail_messages_state[call.message.message_id]['type'] = 'inbox'
+    except telebot.apihelper.ApiTelegramException as e:
+        if "message is not modified" in str(e):
+            logging.info(f"Message {call.message.message_id} in chat {call.message.chat.id} was not modified (refresh inbox).")
+        else:
+            logging.error(f"Lỗi khi làm mới hộp thư cho user {user_id}: {e}")
+            send_message_robustly(call.message.chat.id, text=text, parse_mode=parse_mode, reply_markup=markup)
+            # Xóa trạng thái cũ và thêm trạng thái mới
+            if call.message.message_id in bot.mail_messages_state:
+                del bot.mail_messages_state[call.message.message_id]
+            sent_msg = send_message_robustly(call.message.chat.id, "❌ Đã có lỗi khi làm mới hộp thư. Đây là tin nhắn mới.", parse_mode="HTML")
+            if sent_msg:
+                bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'inbox'}
+    except Exception as e:
+        logging.error(f"Lỗi không xác định khi làm mới hộp thư: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Lỗi khi làm mới hộp thư!", show_alert=True)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("mailtm_back|"))
+def back_to_mail_info_button(call):
+    user_id = call.message.chat.id
+    expected_user_id = call.data.split("|")[1]
+
+    if not check_mail_owner(call, expected_user_id):
+        return
+    
+    bot.answer_callback_query(call.id, "Quay lại thông tin mail...", show_alert=False)
+
+    info = user_data.get(user_id)
+
+    if not info:
+        text = "❌ Bạn chưa tạo email. Gõ /mail10p để tạo nhé!"
+        markup = None
+        parse_mode = 'Markdown'
+    else:
+        elapsed_time = int(time.time() - info["created_at"])
+        remaining_time = 600 - elapsed_time
+        if remaining_time > 0:
+            minutes = remaining_time // 60
+            seconds = remaining_time % 60
+            text = (
+                f"✅ Mail 10 phút của bạn là:\n"
+                f"📧 `{info['email']}`\n"
+                f"⏰ Hết hạn sau {minutes} phút {seconds} giây."
+            )
+            markup = build_mail_buttons(user_id, 'mail_info')
+            parse_mode = 'Markdown'
+        else:
+            del user_data[user_id]
+            text = "⏰ Mail 10 phút của bạn đã hết hạn! Vui lòng tạo mail mới bằng lệnh /mail10p."
+            markup = None
+            parse_mode = 'Markdown'
+    
+    try:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=text,
+            parse_mode=parse_mode,
+            reply_markup=markup
+        )
+        # Cập nhật trạng thái tin nhắn
+        bot.mail_messages_state[call.message.message_id]['type'] = 'mail_info'
+    except telebot.apihelper.ApiTelegramException as e:
+        if "message is not modified" in str(e):
+            logging.info(f"Message {call.message.message_id} in chat {call.message.chat.id} was not modified (back to mail info).")
+        else:
+            logging.error(f"Lỗi khi chỉnh sửa tin nhắn về thông tin mail cho user {user_id}: {e}")
+            send_message_robustly(call.message.chat.id, text=text, parse_mode=parse_mode, reply_markup=markup)
+            # Xóa trạng thái cũ và thêm trạng thái mới
+            if call.message.message_id in bot.mail_messages_state:
+                del bot.mail_messages_state[call.message.message_id]
+            sent_msg = send_message_robustly(call.message.chat.id, "❌ Đã có lỗi khi quay lại thông tin mail. Đây là tin nhắn mới.", parse_mode="HTML")
+            if sent_msg:
+                bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'mail_info'}
+    except Exception as e:
+        logging.error(f"Lỗi không xác định khi quay lại thông tin mail: {e}")
+        bot.answer_callback_query(call.id, "⚠️ Lỗi khi quay lại thông tin mail!", show_alert=True)
 
 # === Webhook Flask ===
 @app.route("/")
