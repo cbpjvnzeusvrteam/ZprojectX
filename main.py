@@ -178,8 +178,8 @@ def create_temp_mail():
     if not domain:
         return None, None, None
 
-    email = f"zprojectX_{random_string()}@{domain}"
-    password = random_string(13)
+    email = f"zproject_{random_string()}@{domain}"
+    password = random_string(12)
 
     try:
         # Tạo tài khoản
@@ -683,6 +683,112 @@ def send_final_notification(admin_id):
         parse_mode="HTML",
         reply_to_message_id=original_message_id # Reply về tin nhắn /noti gốc
     )
+
+
+@bot.message_handler(commands=["phanhoi"])
+@increment_interaction_count
+def send_feedback_to_admin(message):
+    """Xử lý lệnh /phanhoi, cho phép người dùng gửi phản hồi đến admin."""
+    logging.info(f"Received /phanhoi from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
+    sync_chat_to_server(message.chat)
+    feedback_text = message.text.replace("/phanhoi", "").strip()
+
+    if not feedback_text:
+        return send_message_robustly(message.chat.id, text="⚠️ Vui lòng nhập nội dung phản hồi. Ví dụ: <code>/phanhoi Bot bị lỗi ở lệnh /ask</code>", parse_mode="HTML", reply_to_message_id=message.message_id)
+
+    user_info_for_admin = f"<a href='tg://user?id={message.from_user.id}'>{message.from_user.first_name}</a>"
+    if message.from_user.last_name:
+        user_info_for_admin += f" {message.from_user.last_name}"
+    if message.from_user.username:
+        user_info_for_admin += f" (@{message.from_user.username})"
+    user_info_for_admin += f" (<code>{message.from_user.id}</code>)"
+
+    chat_info_for_admin = f"ID Chat: <code>{message.chat.id}</code>\n" \
+                          f"Loại Chat: {message.chat.type}"
+    if message.chat.type in ["group", "supergroup"]:
+        chat_info_for_admin += f"\nTên Chat: {message.chat.title}"
+
+    timestamp = datetime.now().strftime("%H:%M:%S ngày %d/%m/%Y")
+
+    admin_notification = (
+        f"<b>📧 PHẢN HỒI MỚI TỪ NGƯỜI DÙNG</b>\n\n"
+        f"<b>Người gửi:</b>\n{user_info_for_admin}\n"
+        f"<b>Thông tin Chat:</b>\n{chat_info_for_admin}\n"
+        f"<b>Thời gian:</b> <code>{timestamp}</code>\n\n"
+        f"<b>Nội dung phản hồi:</b>\n<blockquote>{html_escape(feedback_text)}</blockquote>\n\n"
+        f"<i>Để phản hồi lại người dùng này, hãy reply tin nhắn này và dùng lệnh <code>/adminph &lt;nội dung phản hồi&gt;</code></i>"
+    )
+
+    try:
+        sent_message_to_admin = bot.send_message(
+            chat_id=ADMIN_ID,
+            text=admin_notification,
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+        with feedback_messages_lock: # Bảo vệ truy cập bot.feedback_messages
+            bot.feedback_messages[sent_message_to_admin.message_id] = {
+                'chat_id': message.chat.id,
+                'user_id': message.from_user.id,
+                'user_first_name': message.from_user.first_name,
+                'feedback_text': feedback_text
+            }
+        
+        send_message_robustly(message.chat.id, text="✅ Cảm ơn bạn đã gửi phản hồi! Admin sẽ xem xét sớm nhất có thể.", parse_mode="HTML", reply_to_message_id=message.message_id)
+    except Exception as e:
+        logging.error(f"Lỗi khi gửi phản hồi đến admin: {e}")
+        send_message_robustly(message.chat.id, text="❌ Đã xảy ra lỗi khi gửi phản hồi. Vui lòng thử lại sau.", parse_mode="HTML", reply_to_message_id=message.message_id)
+
+@bot.message_handler(commands=["adminph"])
+@increment_interaction_count
+def admin_reply_to_feedback(message):
+    """Xử lý lệnh /adminph, cho phép admin phản hồi lại người dùng đã gửi feedback."""
+    logging.info(f"Received /adminph from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
+    if message.from_user.id != ADMIN_ID:
+        return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
+
+    if not message.reply_to_message:
+        return send_message_robustly(message.chat.id, text="⚠️ Bạn cần reply vào tin nhắn phản hồi của người dùng để sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
+
+    original_feedback_message_id = message.reply_to_message.message_id
+    with feedback_messages_lock: # Bảo vệ truy cập bot.feedback_messages
+        feedback_data = bot.feedback_messages.get(original_feedback_message_id)
+
+    if not feedback_data:
+        return send_message_robustly(message.chat.id, text="❌ Không tìm thấy thông tin chat của người dùng này. Có thể tin nhắn quá cũ hoặc bot đã khởi động lại.", parse_mode="HTML", reply_to_message_id=message.message_id)
+
+    user_chat_id = feedback_data['chat_id']
+    user_id_to_tag = feedback_data['user_id']
+    user_name_to_tag = feedback_data['user_first_name']
+    original_feedback_text = feedback_data['feedback_text']
+
+    admin_response_text = message.text.replace("/adminph", "").strip()
+
+    if not admin_response_text:
+        return send_message_robustly(message.chat.id, text="⚠️ Vui lòng nhập nội dung phản hồi của admin. Ví dụ: <code>/adminph Cảm ơn bạn, chúng tôi đã khắc phục lỗi.</code>", parse_mode="HTML", reply_to_message_id=message.message_id)
+
+    user_tag = f"<a href='tg://user?id={user_id_to_tag}'>{user_name_to_tag}</a>"
+
+    admin_reply_to_user = (
+        f"<b>👨‍💻 Admin đã phản hồi bạn {user_tag}!</b>\n\n"
+        f"<b>Nội dung phản hồi của bạn:</b>\n"
+        f"<blockquote>{html_escape(original_feedback_text)}</blockquote>\n\n"
+        f"<b>Phản hồi từ Admin:</b>\n"
+        f"<blockquote>{html_escape(admin_response_text)}</blockquote>\n\n"
+        f"<i>Nếu bạn có thêm câu hỏi, vui lòng gửi phản hồi mới qua lệnh <code>/phanhoi</code>.</i>"
+    )
+
+    try:
+        bot.send_message(
+            chat_id=user_chat_id,
+            text=admin_reply_to_user,
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+        send_message_robustly(message.chat.id, text="✅ Đã gửi phản hồi của Admin đến người dùng thành công.", parse_mode="HTML", reply_to_message_id=message.message_id)
+    except Exception as e:
+        logging.error(f"Lỗi khi gửi phản hồi của admin đến người dùng {user_chat_id}: {e}")
+        send_message_robustly(message.chat.id, text="❌ Đã xảy ra lỗi khi gửi phản hồi của Admin đến người dùng.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
 
 @bot.message_handler(commands=["sever"])
