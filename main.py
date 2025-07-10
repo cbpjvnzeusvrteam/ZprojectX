@@ -11,8 +11,8 @@ from io import BytesIO
 from PIL import Image # Đảm bảo Pillow được cài đặt nếu dùng chức năng ảnh
 import random
 import string
-import threading # Thêm import này cho auto_delete_email
-
+import threading # Thêm import này cho auto_delete_email và Locks
+from telebot import types
 from flask import Flask, request
 from threading import Thread
 import telebot
@@ -33,7 +33,7 @@ logging.basicConfig(
 
 # --- Cấu hình chung ---
 # Lấy BOT_TOKEN từ biến môi trường, hoặc dùng giá trị mặc định nếu không có (chỉ để phát triển)
-TOKEN = os.environ.get("BOT_TOKEN", "7539540916:AAENFBF2B2dyXLITmEC2ccgLYim2t9vxOQk") # THAY BẰNG TOKEN BOT CỦA BẠN
+TOKEN = os.environ.get("BOT_TOKEN", "7539540916:AAENFBF2B2dyXLITmEC2ccgLYim2t9vxQk") # THAY BẰNG TOKEN BOT CỦA BẠN
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 5819094246)) # THAY BẰNG ID ADMIN CỦA BẠN
 
 # Đảm bảo APP_URL là URL thuần túy, không có Markdown
@@ -41,29 +41,30 @@ APP_URL = os.environ.get("APP_URL", "https://zproject-111.onrender.com") # THAY 
 
 logging.info(f"APP_URL được cấu hình: {APP_URL}")
 
-bot = telebot.TeleBot(TOKEN, threaded=False)
+# THAY ĐỔI QUAN TRỌNG: BẬT CHẾ ĐỘ ĐA LUỒNG
+bot = telebot.TeleBot(TOKEN, threaded=True) # <<< ĐÃ CHỈNH SỬA Ở ĐÂY
 app = Flask(__name__)
 START_TIME = time.time()
 
+# Biến toàn cục và các Lock để bảo vệ truy cập đa luồng
 USER_IDS = set()
 GROUP_INFOS = []
-# Từ điển để lưu trữ thông tin phản hồi của người dùng (feedback_message_id: original_chat_id)
-# Điều này cần thiết để admin có thể reply và bot biết gửi về đâu
-bot.feedback_messages = {}
-# Lưu trữ các đoạn code để copy
-bot.code_snippets = {}
-# Lưu trữ các câu trả lời để chuyển thành voice
-bot.voice_map = {}
-
-# Lưu thông tin người dùng Mail.tm (email, mật khẩu, token, thời gian hết hạn)
 user_data = {}
-# Lưu trữ ID tin nhắn của bot để có thể chỉnh sửa sau này
-# mail_message_id: {chat_id, user_id, type: 'mail_info' hoặc 'inbox'}
+bot.feedback_messages = {}
+bot.code_snippets = {}
+bot.voice_map = {}
 bot.mail_messages_state = {}
-
-
-# Biến toàn cục để đếm số lượt tương tác
 interaction_count = 0
+
+# Khởi tạo Locks cho các biến dùng chung
+user_data_lock = threading.Lock()
+feedback_messages_lock = threading.Lock()
+code_snippets_lock = threading.Lock()
+voice_map_lock = threading.Lock()
+mail_messages_state_lock = threading.Lock() # Thêm lock cho bot.mail_messages_state
+interaction_count_lock = threading.Lock()
+user_group_info_lock = threading.Lock()
+
 
 # --- Cấu hình Requests với Retry và Timeout chung ---
 session = requests.Session()
@@ -136,20 +137,21 @@ def random_string(length=3):
 # Tự động xóa email sau 10 phút
 def auto_delete_email(user_id):
     time.sleep(600)  # 10 phút
-    if user_id in user_data:
-        # THỰC HIỆN XÓA TÀI KHOẢN TRÊN MAIL.TM NẾU CÓ THỂ
-        # Ví dụ (cần lưu account_id và token vào user_data khi tạo mail):
-        # try:
-        #     account_info = user_data[user_id]
-        #     if 'account_id' in account_info and 'token' in account_info:
-        #         headers = {"Authorization": f"Bearer {account_info['token']}"}
-        #         session.delete(f"https://api.mail.tm/accounts/{account_info['account_id']}", headers=headers)
-        #         logging.info(f"Đã xóa tài khoản Mail.tm: {account_info['email']}")
-        # except Exception as e:
-        #     logging.error(f"Lỗi khi xóa tài khoản Mail.tm cho user {user_id}: {e}")
+    with user_data_lock: # Bảo vệ truy cập user_data
+        if user_id in user_data:
+            # THỰC HIỆN XÓA TÀI KHOẢN TRÊN MAIL.TM NẾU CÓ THỂ
+            # Ví dụ (cần lưu account_id và token vào user_data khi tạo mail):
+            # try:
+            #     account_info = user_data[user_id]
+            #     if 'account_id' in account_info and 'token' in account_info:
+            #         headers = {"Authorization": f"Bearer {account_info['token']}"}
+            #         session.delete(f"https://api.mail.tm/accounts/{account_info['account_id']}", headers=headers)
+            #         logging.info(f"Đã xóa tài khoản Mail.tm: {account_info['email']}")
+            # except Exception as e:
+            #     logging.error(f"Lỗi khi xóa tài khoản Mail.tm cho user {user_id}: {e}")
 
-        del user_data[user_id]
-        send_message_robustly(user_id, "⏰ Mail 10 phút của bạn đã hết hạn!")
+            del user_data[user_id]
+            send_message_robustly(user_id, "⏰ Mail 10 phút của bạn đã hết hạn!")
 
 # Lấy domain có sẵn từ API mail.tm
 def get_domain():
@@ -242,10 +244,12 @@ def update_id_list_loop():
             data = response.json()
             new_users = set(data.get("users", []))
             new_groups = data.get("groups", [])
-            if new_users != USER_IDS or new_groups != GROUP_INFOS:
-                USER_IDS = new_users
-                GROUP_INFOS = new_groups
-                logging.info("Updated user and group lists")
+            
+            with user_group_info_lock: # Bảo vệ USER_IDS và GROUP_INFOS
+                if new_users != USER_IDS or new_groups != GROUP_INFOS:
+                    USER_IDS = new_users
+                    GROUP_INFOS = new_groups
+                    logging.info("Updated user and group lists")
         except Exception as e:
             logging.error(f"Error updating lists: {e}")
         time.sleep(10) # Đợi 30 giây trước khi cập nhật lại
@@ -272,7 +276,8 @@ def build_reply_button(user_id, question, reply_id=None):
 def increment_interaction_count(func):
     def wrapper(message, *args, **kwargs):
         global interaction_count
-        interaction_count += 1 # Tăng số lượt tương tác
+        with interaction_count_lock: # Sử dụng lock
+            interaction_count += 1 # Tăng số lượt tương tác
         return func(message, *args, **kwargs)
     return wrapper
 
@@ -326,6 +331,7 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
 @increment_interaction_count
 def start_cmd(message):
     """Xử lý lệnh /start, hiển thị thông tin bot và các liên kết."""
+    logging.info(f"Received /start from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     sync_chat_to_server(message.chat)
     markup = InlineKeyboardMarkup()
     markup.add(
@@ -350,6 +356,7 @@ def start_cmd(message):
 @increment_interaction_count
 def help_command(message):
     """Xử lý lệnh /help, hiển thị menu các lệnh."""
+    logging.info(f"Received /help from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     sync_chat_to_server(message.chat)
     help_text = (
         "<b>📚 Menu Lệnh ZProject Bot</b>\n\n"
@@ -378,6 +385,7 @@ def help_command(message):
 @increment_interaction_count
 def time_cmd(message):
     """Xử lý lệnh /time, hiển thị thời gian hoạt động của bot."""
+    logging.info(f"Received /time from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     sync_chat_to_server(message.chat)
     now = time.time()
     seconds = int(now - START_TIME)
@@ -396,12 +404,16 @@ def time_cmd(message):
 @increment_interaction_count
 def tuongtac_command(message):
     """Xử lý lệnh /tuongtac, hiển thị tổng số lượt tương tác của bot."""
+    logging.info(f"Received /tuongtac from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     sync_chat_to_server(message.chat)
     
+    with interaction_count_lock: # Đọc biến được bảo vệ
+        current_interaction_count = interaction_count
+
     reply_text = (
         f"<b>📊 THỐNG KÊ ZPROJECT BOT</b>\n\n"
         f"● Tổng Thống Kê Zproject Bot.\n\n"
-        f"<b>Tổng số lượt tương tác:</b> <code>{interaction_count}</code>\n"
+        f"<b>Tổng số lượt tương tác:</b> <code>{current_interaction_count}</code>\n"
         f"<i>Lưu ý: Số Lượt Tương Tác Càng Cao Chứng Tỏ Độ Uy Tín Của Bot 🎉.</i>"
     )
     
@@ -417,6 +429,7 @@ def tuongtac_command(message):
 @increment_interaction_count
 def send_noti(message):
     """Xử lý lệnh /noti, cho phép Admin gửi thông báo kèm ảnh (tùy chọn) tới tất cả người dùng/nhóm."""
+    logging.info(f"Received /noti from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     if message.from_user.id != ADMIN_ID:
         return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
@@ -434,7 +447,8 @@ def send_noti(message):
     ok, fail = 0, 0
     failed_ids = []
 
-    all_recipients = USER_IDS.union({g["id"] for g in GROUP_INFOS})
+    with user_group_info_lock: # Đọc biến được bảo vệ
+        all_recipients = USER_IDS.union({g["id"] for g in GROUP_INFOS})
 
     for uid in all_recipients:
         try:
@@ -472,6 +486,7 @@ def send_noti(message):
 def spam_ngl_command(message):
     """Xử lý lệnh /ngl để gửi tin nhắn ẩn danh tới NGL.
        Khi lỗi, sẽ bỏ qua lệnh này cho người dùng hiện tại và đợi lệnh mới."""
+    logging.info(f"Received /ngl from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     sync_chat_to_server(message.chat)
 
     args = message.text.split(maxsplit=3)
@@ -540,6 +555,7 @@ def spam_ngl_command(message):
 @increment_interaction_count
 def send_feedback_to_admin(message):
     """Xử lý lệnh /phanhoi, cho phép người dùng gửi phản hồi đến admin."""
+    logging.info(f"Received /phanhoi from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     sync_chat_to_server(message.chat)
     feedback_text = message.text.replace("/phanhoi", "").strip()
 
@@ -576,12 +592,13 @@ def send_feedback_to_admin(message):
             parse_mode="HTML",
             disable_web_page_preview=True
         )
-        bot.feedback_messages[sent_message_to_admin.message_id] = {
-            'chat_id': message.chat.id,
-            'user_id': message.from_user.id,
-            'user_first_name': message.from_user.first_name,
-            'feedback_text': feedback_text
-        }
+        with feedback_messages_lock: # Bảo vệ truy cập bot.feedback_messages
+            bot.feedback_messages[sent_message_to_admin.message_id] = {
+                'chat_id': message.chat.id,
+                'user_id': message.from_user.id,
+                'user_first_name': message.from_user.first_name,
+                'feedback_text': feedback_text
+            }
         
         send_message_robustly(message.chat.id, text="✅ Cảm ơn bạn đã gửi phản hồi! Admin sẽ xem xét sớm nhất có thể.", parse_mode="HTML", reply_to_message_id=message.message_id)
     except Exception as e:
@@ -592,6 +609,7 @@ def send_feedback_to_admin(message):
 @increment_interaction_count
 def admin_reply_to_feedback(message):
     """Xử lý lệnh /adminph, cho phép admin phản hồi lại người dùng đã gửi feedback."""
+    logging.info(f"Received /adminph from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     if message.from_user.id != ADMIN_ID:
         return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
@@ -599,7 +617,8 @@ def admin_reply_to_feedback(message):
         return send_message_robustly(message.chat.id, text="⚠️ Bạn cần reply vào tin nhắn phản hồi của người dùng để sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
     original_feedback_message_id = message.reply_to_message.message_id
-    feedback_data = bot.feedback_messages.get(original_feedback_message_id)
+    with feedback_messages_lock: # Bảo vệ truy cập bot.feedback_messages
+        feedback_data = bot.feedback_messages.get(original_feedback_message_id)
 
     if not feedback_data:
         return send_message_robustly(message.chat.id, text="❌ Không tìm thấy thông tin chat của người dùng này. Có thể tin nhắn quá cũ hoặc bot đã khởi động lại.", parse_mode="HTML", reply_to_message_id=message.message_id)
@@ -641,15 +660,20 @@ def admin_reply_to_feedback(message):
 @increment_interaction_count
 def show_groups(message):
     """Xử lý lệnh /sever, hiển thị danh sách các nhóm bot đang tham gia (chỉ Admin)."""
+    logging.info(f"Received /sever from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     if message.from_user.id != ADMIN_ID:
         return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
-    if not GROUP_INFOS:
-        return send_message_robustly(message.chat.id, text="📭 Hiện tại bot chưa có thông tin về nhóm nào.", parse_mode="HTML", reply_to_message_id=message.message_id)
-    text = "<b>📦 Sever:</b>\n\n"
-    for g in GROUP_INFOS:
-        title = g.get("title", "Không rõ tên nhóm")
-        link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Không có link mời"
-        text += f"📌 <b>{title}</b>\n{link}\n\n"
+    
+    with user_group_info_lock: # Đọc biến được bảo vệ
+        if not GROUP_INFOS:
+            return send_message_robustly(message.chat.id, text="📭 Hiện tại bot chưa có thông tin về nhóm nào.", parse_mode="HTML", reply_to_message_id=message.message_id)
+        
+        text = "<b>📦 Sever:</b>\n\n"
+        for g in GROUP_INFOS:
+            title = g.get("title", "Không rõ tên nhóm")
+            link = f"https://t.me/{g.get('username')}" if g.get("username") else "⛔ Không có link mời"
+            text += f"📌 <b>{title}</b>\n{link}\n\n"
+    
     send_message_robustly(message.chat.id, text=text, parse_mode="HTML", disable_web_page_preview=True, reply_to_message_id=message.message_id)
 
 
@@ -657,48 +681,52 @@ def show_groups(message):
 @bot.message_handler(commands=['mail10p'])
 @increment_interaction_count
 def handle_mail10p(message):
+    logging.info(f"Received /mail10p from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     sync_chat_to_server(message.chat)
     user_id = message.chat.id
     
     # Kiểm tra xem người dùng đã có mail chưa và còn thời gian không
-    if user_id in user_data:
-        elapsed_time = int(time.time() - user_data[user_id]["created_at"])
-        remaining_time = 600 - elapsed_time
-        if remaining_time > 0:
-            minutes = remaining_time // 60
-            seconds = remaining_time % 60
-            
-            # Gửi lại thông tin mail kèm nút "Xem Hộp Thư"
-            mail_info_text = (
-                f"⚠️ Bạn đã có một mail 10 phút rồi:\n"
-                f"📧 `{user_data[user_id]['email']}`\n"
-                f"⏰ Mail này sẽ hết hạn sau {minutes} phút {seconds} giây."
-            )
-            markup = build_mail_buttons(user_id, 'mail_info')
-            
-            sent_msg = send_message_robustly(message.chat.id, 
-                                            text=mail_info_text,
-                                            parse_mode='Markdown',
-                                            reply_markup=markup,
-                                            reply_to_message_id=message.message_id)
-            if sent_msg:
-                bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'mail_info'}
-            return
-        else:
-            # Nếu hết hạn nhưng chưa bị xóa, xóa nó đi
-            del user_data[user_id]
-            send_message_robustly(message.chat.id, "⏰ Mail 10 phút của bạn đã hết hạn, đang tạo mail mới...", parse_mode='Markdown', reply_to_message_id=message.message_id)
+    with user_data_lock: # Bảo vệ truy cập user_data
+        if user_id in user_data:
+            elapsed_time = int(time.time() - user_data[user_id]["created_at"])
+            remaining_time = 600 - elapsed_time
+            if remaining_time > 0:
+                minutes = remaining_time // 60
+                seconds = remaining_time % 60
+                
+                # Gửi lại thông tin mail kèm nút "Xem Hộp Thư"
+                mail_info_text = (
+                    f"⚠️ Bạn đã có một mail 10 phút rồi:\n"
+                    f"📧 `{user_data[user_id]['email']}`\n"
+                    f"⏰ Mail này sẽ hết hạn sau {minutes} phút {seconds} giây."
+                )
+                markup = build_mail_buttons(user_id, 'mail_info')
+                
+                sent_msg = send_message_robustly(message.chat.id, 
+                                                text=mail_info_text,
+                                                parse_mode='Markdown',
+                                                reply_markup=markup,
+                                                reply_to_message_id=message.message_id)
+                with mail_messages_state_lock: # Bảo vệ truy cập bot.mail_messages_state
+                    if sent_msg:
+                        bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'mail_info'}
+                return
+            else:
+                # Nếu hết hạn nhưng chưa bị xóa, xóa nó đi
+                del user_data[user_id]
+                send_message_robustly(message.chat.id, "⏰ Mail 10 phút của bạn đã hết hạn, đang tạo mail mới...", parse_mode='Markdown', reply_to_message_id=message.message_id)
 
 
     email, pwd, token = create_temp_mail()
 
     if email:
-        user_data[user_id] = {
-            "email": email,
-            "password": pwd,
-            "token": token,
-            "created_at": time.time()
-        }
+        with user_data_lock: # Bảo vệ truy cập user_data
+            user_data[user_id] = {
+                "email": email,
+                "password": pwd,
+                "token": token,
+                "created_at": time.time()
+            }
         
         mail_info_text = (
             f"✅ Mail 10 phút của bạn là:\n"
@@ -713,41 +741,113 @@ def handle_mail10p(message):
                                        reply_markup=markup,
                                        reply_to_message_id=message.message_id)
         # Lưu trữ ID tin nhắn để có thể chỉnh sửa sau này
-        if sent_msg:
-            bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'mail_info'}
+        with mail_messages_state_lock: # Bảo vệ truy cập bot.mail_messages_state
+            if sent_msg:
+                bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'mail_info'}
         
         threading.Thread(target=auto_delete_email, args=(user_id,)).start()
     else:
         send_message_robustly(message.chat.id, "❌ Không thể tạo email. Vui lòng thử lại sau!", parse_mode='Markdown', reply_to_message_id=message.message_id)
 
+
+# Hàm xử lý lệnh /ping
+@bot.message_handler(commands=['ping'])
+def ping_command(message):
+    start_time = time.time()
+    
+    # Gửi tin nhắn tạm thời để tính ping
+    sent_message = bot.send_message(message.chat.id, "Đang Đo Ping Sever Bot...", parse_mode='HTML')
+    
+    end_time = time.time()
+    
+    # Tính toán ping (thời gian gửi và nhận tin nhắn)
+    ping_ms = round((end_time - start_time) * 1000)
+
+    # Tạo nội dung tin nhắn HTML
+    html_message = f"""
+<blockquote>
+    <b>⚡ Ping Sever Bot hiện tại:</b> <i>{ping_ms}ms</i>
+</blockquote>
+"""
+    # Tạo nút inline
+    keyboard = types.InlineKeyboardMarkup()
+    refresh_button = types.InlineKeyboardButton("♻️ Làm mới Ping", callback_data='refresh_ping')
+    keyboard.add(refresh_button)
+
+    # Chỉnh sửa tin nhắn ban đầu với thông tin ping và nút
+    bot.edit_message_text(chat_id=message.chat.id, 
+                          message_id=sent_message.message_id,
+                          text=html_message, 
+                          reply_markup=keyboard, 
+                          parse_mode='HTML')
+
+# Hàm xử lý khi nút "Làm mới Ping" được nhấn
+@bot.callback_query_handler(func=lambda call: call.data == 'refresh_ping')
+def refresh_ping_callback(call):
+    # Báo hiệu đã nhận callback
+    bot.answer_callback_query(call.id) 
+
+    start_time = time.time()
+    
+    # Chỉnh sửa tin nhắn để hiển thị trạng thái "Đang làm mới"
+    # Đây là một thao tác I/O, thời gian thực hiện có thể được dùng để ước lượng ping.
+    bot.edit_message_text(chat_id=call.message.chat.id, 
+                          message_id=call.message.message_id,
+                          text="Đang làm mới ping...", 
+                          parse_mode='HTML')
+
+    end_time = time.time()
+    
+    ping_ms = round((end_time - start_time) * 1000)
+
+    html_message = f"""
+<blockquote>
+    <b>⚡ Ping Sever Bot Hiện Tại hiện tại:</b> <i>{ping_ms}ms</i>
+</blockquote>
+"""
+    keyboard = types.InlineKeyboardMarkup()
+    refresh_button = types.InlineKeyboardButton("♻️ Làm mới Ping", callback_data='refresh_ping')
+    keyboard.add(refresh_button)
+
+    # Chỉnh sửa lại tin nhắn với thông tin ping mới và nút
+    bot.edit_message_text(chat_id=call.message.chat.id, 
+                          message_id=call.message.message_id,
+                          text=html_message, 
+                          reply_markup=keyboard, 
+                          parse_mode='HTML')
+
+
 # Lệnh mới để xóa mail 10 phút
 @bot.message_handler(commands=['xoamail10p'])
 @increment_interaction_count
 def handle_xoamail10p(message):
+    logging.info(f"Received /xoamail10p from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     sync_chat_to_server(message.chat)
     user_id = message.chat.id
 
-    if user_id in user_data:
-        # Xóa tài khoản Mail.tm nếu có thể (thêm logic gọi API Mail.tm nếu có account_id)
-        # Ví dụ:
-        # try:
-        #     account_info = user_data[user_id]
-        #     if 'account_id' in account_info and 'token' in account_info:
-        #         headers = {"Authorization": f"Bearer {account_info['token']}"}
-        #         session.delete(f"https://api.mail.tm/accounts/{account_info['account_id']}", headers=headers)
-        #         logging.info(f"Đã xóa tài khoản Mail.tm: {account_info['email']}")
-        # except Exception as e:
-        #     logging.error(f"Lỗi khi xóa tài khoản Mail.tm cho user {user_id}: {e}")
+    with user_data_lock: # Bảo vệ truy cập user_data
+        if user_id in user_data:
+            # Xóa tài khoản Mail.tm nếu có thể (thêm logic gọi API Mail.tm nếu có account_id)
+            # Ví dụ:
+            # try:
+            #     account_info = user_data[user_id]
+            #     if 'account_id' in account_info and 'token' in account_info:
+            #         headers = {"Authorization": f"Bearer {account_info['token']}"}
+            #         session.delete(f"https://api.mail.tm/accounts/{account_info['account_id']}", headers=headers)
+            #         logging.info(f"Đã xóa tài khoản Mail.tm: {account_info['email']}")
+            # except Exception as e:
+            #     logging.error(f"Lỗi khi xóa tài khoản Mail.tm cho user {user_id}: {e}")
 
-        del user_data[user_id]
-        send_message_robustly(message.chat.id, "<i>🗑️ Mail 10 phút của bạn đã được xóa thành công!</i>", parse_mode='HTML', reply_to_message_id=message.message_id)
-    else:
-        send_message_robustly(message.chat.id, "<i>⚠️ Bạn không có mail 10 phút nào đang hoạt động để xóa.<i>", parse_mode='HTML', reply_to_message_id=message.message_id)
+            del user_data[user_id]
+            send_message_robustly(message.chat.id, "<i>🗑️ Mail 10 phút của bạn đã được xóa thành công!</i>", parse_mode='HTML', reply_to_message_id=message.message_id)
+        else:
+            send_message_robustly(message.chat.id, "<i>⚠️ Bạn không có mail 10 phút nào đang hoạt động để xóa.<i>", parse_mode='HTML', reply_to_message_id=message.message_id)
 
 
 # Hàm nội bộ để lấy nội dung hộp thư và tạo markup
 def _get_inbox_content(user_id):
-    info = user_data.get(user_id)
+    with user_data_lock: # Bảo vệ truy cập user_data
+        info = user_data.get(user_id)
 
     if not info:
         return "<i>❌ Bạn chưa tạo email. Gõ /mail10p để tạo nhé!</i>", None, 'HTML'
@@ -756,18 +856,16 @@ def _get_inbox_content(user_id):
     elapsed_time = int(time.time() - info["created_at"])
     if elapsed_time >= 600: # 10 phút
         # Lấy thông tin email trước khi xóa
-        expired_mail_address = info.get('address', 'không xác định')
+        expired_mail_address = info.get('email', 'không xác định') # Dùng 'email' thay vì 'address'
+
+        with user_data_lock: # Bảo vệ truy cập user_data khi xóa
+            del user_data[user_id]
         
-        del user_data[user_id]
-        # Thông báo mail hết hạn với địa chỉ mail cụ thể và thông tin về thư
-        # Sử dụng parser_mode HTML và tag người dùng (giả định cách tag với ID)
         reply_text = (
             f"⏰ <b>Mail <code>{expired_mail_address}</code> của bạn đã hết hạn!</b> "
             f"<blockquote>Tất cả thư của mail này sẽ bị xóa.</blockquote> "
             f"Vui lòng tạo mail mới bằng lệnh /mail10p."
         )
-        # Nếu bạn muốn tag người dùng cụ thể, bạn cần có username hoặc full name của họ.
-        # Ví dụ: f"<a href='tg://user?id={user_id}'>Người dùng của bạn</a>"
         return reply_text, None, 'HTML'
 
     headers = {
@@ -809,6 +907,7 @@ def _get_inbox_content(user_id):
 @bot.message_handler(commands=['hopthu'])
 @increment_interaction_count
 def handle_hopthu(message):
+    logging.info(f"Received /hopthu from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     sync_chat_to_server(message.chat)
     user_id = message.chat.id
     
@@ -818,9 +917,10 @@ def handle_hopthu(message):
                                    parse_mode=parse_mode, 
                                    reply_markup=markup,
                                    reply_to_message_id=message.message_id)
-    if sent_msg:
-        # Nếu gửi tin nhắn mới, lưu trạng thái là inbox
-        bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'inbox'}
+    with mail_messages_state_lock: # Bảo vệ truy cập bot.mail_messages_state
+        if sent_msg:
+            # Nếu gửi tin nhắn mới, lưu trạng thái là inbox
+            bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'inbox'}
 
 
 # Hàm mới để định dạng đầu ra AI
@@ -850,7 +950,8 @@ def copy_code_button(call):
     """Xử lý nút 'Copy Code'."""
     try:
         _, code_id = call.data.split("|", 1)
-        code_content = bot.code_snippets.get(code_id)
+        with code_snippets_lock: # Bảo vệ truy cập bot.code_snippets
+            code_content = bot.code_snippets.get(code_id)
 
         if code_content:
             bot.answer_callback_query(call.id, text="Đã sao chép nội dung code!", show_alert=True)
@@ -879,6 +980,7 @@ def copy_code_button(call):
 @increment_interaction_count
 def ask_command(message):
     """Xử lý lệnh /ask để gửi câu hỏi đến Gemini AI. Hỗ trợ hỏi kèm ảnh."""
+    logging.info(f"Received /ask from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     sync_chat_to_server(message.chat)
     prompt = message.text.replace("/ask", "").strip()
     if not prompt:
@@ -974,7 +1076,9 @@ def ask_command(message):
     # --- Xử lý định dạng và gửi tin nhắn ---
     response_parts_structured = format_ai_response_html(result)
     reply_id = uuid.uuid4().hex[:6]
-    bot.voice_map[reply_id] = result # Lưu toàn bộ kết quả gốc cho TTS
+    
+    with voice_map_lock: # Bảo vệ truy cập bot.voice_map
+        bot.voice_map[reply_id] = result # Lưu toàn bộ kết quả gốc cho TTS
 
     # Tính toán tổng độ dài của nội dung (thô) để quyết định gửi file hay gửi tin nhắn
     total_raw_length = 0
@@ -1025,12 +1129,6 @@ def ask_command(message):
         main_markup = build_reply_button(user_id, prompt, reply_id)
         current_message_text = f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n"
         
-        # Nếu có code block, chúng ta sẽ gửi kèm nút copy riêng lẻ
-        # Nếu không có code block, nút copy sẽ không được tạo
-        
-        # Để đơn giản hóa, nếu không gửi file, ta sẽ gom tất cả thành 1 tin nhắn HTML
-        # Các nút copy code sẽ được xử lý riêng trong callback_query_handler
-        
         combined_text_for_telegram = ""
         for part in response_parts_structured:
             if part["type"] == "text":
@@ -1038,7 +1136,8 @@ def ask_command(message):
             elif part["type"] == "code":
                 # Thêm nút copy code vào markup chính cho phần code đó
                 copy_id = uuid.uuid4().hex[:8]
-                bot.code_snippets[copy_id] = part["raw_content"]
+                with code_snippets_lock: # Bảo vệ truy cập bot.code_snippets
+                    bot.code_snippets[copy_id] = part["raw_content"]
                 
                 # InlineKeyboardMarkup mới cho mỗi code block
                 code_markup = InlineKeyboardMarkup()
@@ -1133,7 +1232,10 @@ def retry_button(call):
             logging.warning(f"Failed to edit message {call.message.message_id} on retry: {e}. Sending new 'thinking' message.")
             bot.send_message(call.message.chat.id, "🤖 Đang xử lý lại...", reply_to_message_id=call.message.message_id)
 
-        ask_command(msg)
+        # Gọi hàm xử lý lệnh /ask (được bọc bởi decorator @increment_interaction_count)
+        # Chạy trong một luồng riêng để không chặn callback
+        Thread(target=ask_command, args=(msg,)).start()
+
     except Exception as e:
         bot.answer_callback_query(call.id, "⚠️ Lỗi khi thử lại!", show_alert=True)
         logging.error(f"[RETRY] Lỗi: {e}")
@@ -1149,7 +1251,8 @@ def tts_button(call):
         if str(call.from_user.id) != uid:
             return bot.answer_callback_query(call.id, "🚫 Bạn không phải người yêu cầu voice này.", show_alert=True)
 
-        answer = bot.voice_map.get(reply_id)
+        with voice_map_lock: # Bảo vệ truy cập bot.voice_map
+            answer = bot.voice_map.get(reply_id)
         if not answer:
             return bot.answer_callback_query(call.id, "❌ Không tìm thấy dữ liệu giọng nói.", show_alert=True)
 
@@ -1211,20 +1314,24 @@ def show_inbox_button(call):
             parse_mode=parse_mode,
             reply_markup=markup
         )
-        # Cập nhật trạng thái tin nhắn
-        bot.mail_messages_state[call.message.message_id]['type'] = 'inbox'
+        with mail_messages_state_lock: # Bảo vệ truy cập bot.mail_messages_state
+            # Cập nhật trạng thái tin nhắn
+            if call.message.message_id in bot.mail_messages_state:
+                bot.mail_messages_state[call.message.message_id]['type'] = 'inbox'
     except telebot.apihelper.ApiTelegramException as e:
         if "message is not modified" in str(e):
             logging.info(f"Message {call.message.message_id} in chat {call.message.chat.id} was not modified (inbox).")
         else:
             logging.error(f"Lỗi khi chỉnh sửa tin nhắn thành hộp thư cho user {user_id}: {e}")
+            # Nếu edit không thành công, thử gửi tin nhắn mới
             send_message_robustly(call.message.chat.id, text=text, parse_mode=parse_mode, reply_markup=markup)
             # Xóa trạng thái cũ và thêm trạng thái mới
-            if call.message.message_id in bot.mail_messages_state:
-                del bot.mail_messages_state[call.message.message_id]
-            sent_msg = send_message_robustly(call.message.chat.id, "❌ Đã có lỗi khi cập nhật hộp thư. Đây là tin nhắn mới.", parse_mode="HTML")
-            if sent_msg:
-                bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'inbox'}
+            with mail_messages_state_lock: # Bảo vệ truy cập bot.mail_messages_state
+                if call.message.message_id in bot.mail_messages_state:
+                    del bot.mail_messages_state[call.message.message_id]
+                sent_msg = send_message_robustly(call.message.chat.id, "❌ Đã có lỗi khi cập nhật hộp thư. Đây là tin nhắn mới.", parse_mode="HTML")
+                if sent_msg:
+                    bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'inbox'}
             
     except Exception as e:
         logging.error(f"Lỗi không xác định khi xem hộp thư: {e}")
@@ -1251,20 +1358,23 @@ def refresh_inbox_button(call):
             parse_mode=parse_mode,
             reply_markup=markup
         )
-        # Cập nhật trạng thái tin nhắn
-        bot.mail_messages_state[call.message.message_id]['type'] = 'inbox'
+        with mail_messages_state_lock: # Bảo vệ truy cập bot.mail_messages_state
+            # Cập nhật trạng thái tin nhắn
+            if call.message.message_id in bot.mail_messages_state:
+                bot.mail_messages_state[call.message.message_id]['type'] = 'inbox'
     except telebot.apihelper.ApiTelegramException as e:
         if "message is not modified" in str(e):
             logging.info(f"Message {call.message.message_id} in chat {call.message.chat.id} was not modified (refresh inbox).")
         else:
             logging.error(f"Lỗi khi làm mới hộp thư cho user {user_id}: {e}")
             send_message_robustly(call.message.chat.id, text=text, parse_mode=parse_mode, reply_markup=markup)
-            # Xóa trạng thái cũ và thêm trạng thái mới
-            if call.message.message_id in bot.mail_messages_state:
-                del bot.mail_messages_state[call.message.message_id]
-            sent_msg = send_message_robustly(call.message.chat.id, "❌ Đã có lỗi khi làm mới hộp thư. Đây là tin nhắn mới.", parse_mode="HTML")
-            if sent_msg:
-                bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'inbox'}
+            with mail_messages_state_lock: # Bảo vệ truy cập bot.mail_messages_state
+                # Xóa trạng thái cũ và thêm trạng thái mới
+                if call.message.message_id in bot.mail_messages_state:
+                    del bot.mail_messages_state[call.message.message_id]
+                sent_msg = send_message_robustly(call.message.chat.id, "❌ Đã có lỗi khi làm mới hộp thư. Đây là tin nhắn mới.", parse_mode="HTML")
+                if sent_msg:
+                    bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'inbox'}
     except Exception as e:
         logging.error(f"Lỗi không xác định khi làm mới hộp thư: {e}")
         bot.answer_callback_query(call.id, "⚠️ Lỗi khi làm mới hộp thư!", show_alert=True)
@@ -1280,7 +1390,8 @@ def back_to_mail_info_button(call):
     
     bot.answer_callback_query(call.id, "Quay lại thông tin mail...", show_alert=False)
 
-    info = user_data.get(user_id)
+    with user_data_lock: # Bảo vệ truy cập user_data
+        info = user_data.get(user_id)
 
     if not info:
         text = "<i>❌ Bạn chưa tạo email. Gõ /mail10p để tạo nhé!</i>"
@@ -1300,7 +1411,8 @@ def back_to_mail_info_button(call):
             markup = build_mail_buttons(user_id, 'mail_info')
             parse_mode = 'HTML'
         else:
-            del user_data[user_id]
+            with user_data_lock: # Bảo vệ truy cập user_data khi xóa
+                del user_data[user_id]
             text = "⏰ Mail 10 phút của bạn đã hết hạn! Vui lòng tạo mail mới bằng lệnh /mail10p."
             markup = None
             parse_mode = 'HTML'
@@ -1313,20 +1425,23 @@ def back_to_mail_info_button(call):
             parse_mode=parse_mode,
             reply_markup=markup
         )
-        # Cập nhật trạng thái tin nhắn
-        bot.mail_messages_state[call.message.message_id]['type'] = 'mail_info'
+        with mail_messages_state_lock: # Bảo vệ truy cập bot.mail_messages_state
+            # Cập nhật trạng thái tin nhắn
+            if call.message.message_id in bot.mail_messages_state:
+                bot.mail_messages_state[call.message.message_id]['type'] = 'mail_info'
     except telebot.apihelper.ApiTelegramException as e:
         if "message is not modified" in str(e):
             logging.info(f"Message {call.message.message_id} in chat {call.message.chat.id} was not modified (back to mail info).")
         else:
             logging.error(f"Lỗi khi chỉnh sửa tin nhắn về thông tin mail cho user {user_id}: {e}")
             send_message_robustly(call.message.chat.id, text=text, parse_mode=parse_mode, reply_markup=markup)
-            # Xóa trạng thái cũ và thêm trạng thái mới
-            if call.message.message_id in bot.mail_messages_state:
-                del bot.mail_messages_state[call.message.message_id]
-            sent_msg = send_message_robustly(call.message.chat.id, "❌ Đã có lỗi khi quay lại thông tin mail. Đây là tin nhắn mới.", parse_mode="HTML")
-            if sent_msg:
-                bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'mail_info'}
+            with mail_messages_state_lock: # Bảo vệ truy cập bot.mail_messages_state
+                # Xóa trạng thái cũ và thêm trạng thái mới
+                if call.message.message_id in bot.mail_messages_state:
+                    del bot.mail_messages_state[call.message.message_id]
+                sent_msg = send_message_robustly(call.message.chat.id, "❌ Đã có lỗi khi quay lại thông tin mail. Đây là tin nhắn mới.", parse_mode="HTML")
+                if sent_msg:
+                    bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'mail_info'}
     except Exception as e:
         logging.error(f"Lỗi không xác định khi quay lại thông tin mail: {e}")
         bot.answer_callback_query(call.id, "⚠️ Lỗi khi quay lại thông tin mail!", show_alert=True)
@@ -1341,8 +1456,9 @@ def index():
 def webhook():
     """Điểm cuối webhook để nhận cập nhật từ Telegram."""
     try:
+        # Xử lý update trong một luồng riêng nếu bot được khởi tạo với threaded=True
         update = telebot.types.Update.de_json(request.data.decode("utf-8"))
-        bot.process_new_updates([update])
+        bot.process_new_updates([update]) # Khi threaded=True, mỗi update sẽ sinh ra một luồng riêng
         return "OK", 200
     except Exception as e:
         logging.error(f"Lỗi webhook: {e}")
@@ -1366,3 +1482,4 @@ if __name__ == "__main__":
         app.run(host="0.0.0.0", port=port)
     except Exception as e:
         logging.critical(f"Lỗi nghiêm trọng khi khởi động bot: {e}")
+
