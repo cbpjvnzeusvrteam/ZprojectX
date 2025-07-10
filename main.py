@@ -33,7 +33,7 @@ logging.basicConfig(
 
 # --- Cấu hình chung ---
 # Lấy BOT_TOKEN từ biến môi trường, hoặc dùng giá trị mặc định nếu không có (chỉ để phát triển)
-TOKEN = os.environ.get("BOT_TOKEN", "7539540916:AAENFBF2B2dyXLITmEC2ccgLYim2t9vxQk") # THAY BẰNG TOKEN BOT CỦA BẠN
+TOKEN = os.environ.get("BOT_TOKEN", "7539540916:AAENFBF2B2dyXLITmEC2ccgLYim2t9vxOQk") # THAY BẰNG TOKEN BOT CỦA BẠN
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 5819094246)) # THAY BẰNG ID ADMIN CỦA BẠN
 
 # Đảm bảo APP_URL là URL thuần túy, không có Markdown
