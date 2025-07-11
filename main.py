@@ -178,8 +178,8 @@ def create_temp_mail():
     if not domain:
         return None, None, None
 
-    email = f"zprojectX_{random_string()}@{domain}"
-    password = random_string(13)
+    email = f"zproject_{random_string()}@{domain}"
+    password = random_string(12)
 
     try:
         # Tạo tài khoản
