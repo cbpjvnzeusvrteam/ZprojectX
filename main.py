@@ -344,7 +344,7 @@ def start_cmd(message):
         message.chat.id,
         photo=START_IMAGE_URL,
         caption="<blockquote><b>🚀 ZProject Bot</b></blockquote>\n\n"
-                "<blockquote expandable><b>Chào mừng bạn đến với Dịch Vụ Zproject Bot Được Make Bởi @zproject2\n "
+                "<blockquote><b>Chào mừng bạn đến với Dịch Vụ Zproject Bot Được Make Bởi @zproject2\n "
                 "● Chúng Tôi Có Các Dịch Vụ Như Treo Bot 24/7 Giá Cực Rẻ Hơn VPS và Máy Ảo \n● Bạn Có Thể Liên Hệ Telegram @zproject2.\n"
                 "--> Gõ /phanhoi Để Phản Hồi Lỗi Hoặc Cần Cải Tiến Gì Đó Cho Bot, Ví Dụ <code>/phanhoi Lỗi Ở Lệnh Ask 503.</code>\n"
                 "--> Gõ /help để xem danh sách các lệnh.</b></blockquote>",
@@ -723,7 +723,7 @@ def spam_ngl_command(message):
             failed_count = data["data"].get("failed", 0)
 
             reply_text = (
-                f"<blockquote expandable><b>✅ Đã Attack NGL Thành Công!</b>\n\n"
+                f"<blockquote><b>✅ Đã Attack NGL Thành Công!</b>\n\n"
                 f"<b>👤 Username:</b> <code>{username}</code>\n"
                 f"<b>💬 Tin nhắn:</b> <code>{tinnhan}</code>\n"
                 f"<b>🔢 Số lần gửi:</b> <code>{total_sent}</code>\n"
