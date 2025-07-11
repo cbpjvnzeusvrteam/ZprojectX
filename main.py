@@ -394,13 +394,13 @@ def duongcongbangdev_handle_callback(call):
             # Xây dựng tin nhắn thông tin đẹp mắt
             user_info_message = (
                 f"<i>✨ Thông Tin Thành Viên ✨</i>\n\n"
-                f"<blockquote expandable>👤 Tên: {user.first_name} {user.last_name if user.last_name else ''}\n"
+                f"👤 Tên: {user.first_name} {user.last_name if user.last_name else ''}\n"
                 f"🆔 ID: `{user.id}`\n"
                 f"👋 Username: @{user.username}\n" if user.username else f"👋 Username: Không có\n"
                 f"🔗 Link Profile: [Xem Profile](tg://user?id={user.id})\n"
                 f"🌟 Là Bot: {'Có' if user.is_bot else 'Không'}\n"
                 f"📈 Trạng Thái Trong Nhóm: {member_info.status.capitalize()}\n"
-                f"🗓️ Thời Gian Tham Gia: {member_info.until_date if member_info.until_date else 'Không xác định'}\n</blockquote>"
+                f"🗓️ Thời Gian Tham Gia: {member_info.until_date if member_info.until_date else 'Không xác định'}\n"
             )
             bot.send_message(call.message.chat.id, user_info_message, parse_mode='HTML')
             bot.answer_callback_query(call.id, "Thông tin đã được gửi!")
