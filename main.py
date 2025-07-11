@@ -327,6 +327,88 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
 
 # === LỆNH XỬ LÝ TIN NHẮN ===
 
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import random
+
+pressed_info_buttons = set()
+
+@bot.message_handler(content_types=['new_chat_members'])
+def duongcongbangdev_welcome(message):
+    for member in message.new_chat_members:
+        # Bỏ dòng này để không lưu ID nhóm:
+        # save_group_to_file(message.chat.id) 
+
+        # Tạo markup bàn phím inline
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton("🧑‍💻 Admin", url="t.me/zproject2"),
+            InlineKeyboardButton("📢 Group Thông Báo", url="t.me/zproject3")
+        )
+        markup.add(
+            InlineKeyboardButton("💬 Group Chat Chính", url="t.me/zproject4"),
+            InlineKeyboardButton("ℹ️ Thông Tin Của Bạn", callback_data=f"user_info_{member.id}")
+        )
+        
+        video = random.choice(["https://i.pinimg.com/originals/ff/81/de/ff81dee1dcdd40d560569fe2ae94b6d3.gif"])
+        
+        welcome = (
+            f"<blockquote><code>❖ 🎉 ZprojectX Bot Welcome 🎉 ❖</code></blockquote>\n\n"
+            f"<blockquote><i>✡ Xin Chào 👋!</i> <a href='tg://user?id={member.id}'>{member.first_name}</a></blockquote>\n"
+            f"<blockquote><b>➩ Đã Tham Gia Nhóm: <b>{message.chat.title}</b></b></blockquote>\n"
+            f"<blockquote><i>➩ Số thành viên hiện tại: {bot.get_chat_members_count(message.chat.id)}</i></blockquote>\n"
+            "<blockquote><i>▣ Dùng /help để xem all lệnh của bot</i></blockquote>\n"
+            "<blockquote><code>▣ Dùng /phanhoi nội dung | Để Gửi Phản Hồi Lỗi Hoặc Chức Năng Cần Cải Tiến!</code></blockquote>\n"
+        )
+        
+        bot.send_video(
+            message.chat.id,
+            video=video,
+            caption=welcome,
+            reply_to_message_id=message.message_id,
+            supports_streaming=True,
+            parse_mode='HTML',
+            reply_markup=markup
+        )
+
+
+@bot.callback_query_handler(func=lambda call: True)
+def duongcongbangdev_handle_callback(call):
+    # Xử lý nút "Thông Tin Của Bạn"
+    if call.data.startswith("user_info_"):
+        user_id = int(call.data.split("_")[2])
+        message_id = call.message.message_id
+
+        # Kiểm tra xem nút info này đã được nhấn cho tin nhắn này chưa
+        if (message_id, user_id) in pressed_info_buttons:
+            bot.answer_callback_query(call.id, "Bạn Đã Xem Rồi Còn Có Ý Định Spam Thì Tuổi Nhé!", show_alert=True)
+            return
+
+        # Thêm ID tin nhắn và ID người dùng vào tập hợp các nút đã nhấn
+        pressed_info_buttons.add((message_id, user_id))
+
+        try:
+            member_info = bot.get_chat_member(call.message.chat.id, user_id)
+            user = member_info.user
+            
+            # Xây dựng tin nhắn thông tin đẹp mắt
+            user_info_message = (
+                f"<i>✨ Thông Tin Thành Viên ✨</i>\n\n"
+                f"<blockquote expandable>👤 Tên: {user.first_name} {user.last_name if user.last_name else ''}\n"
+                f"🆔 ID: `{user.id}`\n"
+                f"👋 Username: @{user.username}\n" if user.username else f"👋 Username: Không có\n"
+                f"🔗 Link Profile: [Xem Profile](tg://user?id={user.id})\n"
+                f"🌟 Là Bot: {'Có' if user.is_bot else 'Không'}\n"
+                f"📈 Trạng Thái Trong Nhóm: {member_info.status.capitalize()}\n"
+                f"🗓️ Thời Gian Tham Gia: {member_info.until_date if member_info.until_date else 'Không xác định'}\n</blockquote>"
+            )
+            bot.send_message(call.message.chat.id, user_info_message, parse_mode='HTML')
+            bot.answer_callback_query(call.id, "Thông tin đã được gửi!")
+            
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"Không thể lấy thông tin: {e}", show_alert=True)
+
+
 @bot.message_handler(commands=["start"])
 @increment_interaction_count
 def start_cmd(message):
@@ -342,11 +424,11 @@ def start_cmd(message):
     send_message_robustly(
         message.chat.id,
         photo=START_IMAGE_URL,
-        caption="<b>🚀 ZProject Bot</b>\n\n"
-                "Chào mừng bạn đến với Dịch Vụ Zproject Bot Được Make Bởi @zproject2\n "
+        caption="<blockquote><b>🚀 ZProject Bot</b></blockquote>\n\n"
+                "<blockquote expandable><b>Chào mừng bạn đến với Dịch Vụ Zproject Bot Được Make Bởi @zproject2\n "
                 "● Chúng Tôi Có Các Dịch Vụ Như Treo Bot 24/7 Giá Cực Rẻ Hơn VPS và Máy Ảo \n● Bạn Có Thể Liên Hệ Telegram @zproject2.\n"
                 "--> Gõ /phanhoi Để Phản Hồi Lỗi Hoặc Cần Cải Tiến Gì Đó Cho Bot, Ví Dụ <code>/phanhoi Lỗi Ở Lệnh Ask 503.</code>\n"
-                "--> Gõ /help để xem danh sách các lệnh.",
+                "--> Gõ /help để xem danh sách các lệnh.</b></blockquote>",
         reply_markup=markup,
         parse_mode="HTML",
         reply_to_message_id=message.message_id
@@ -359,7 +441,7 @@ def help_command(message):
     logging.info(f"Received /help from user {message.from_user.id} in chat {message.chat.id}") # Thêm log
     sync_chat_to_server(message.chat)
     help_text = (
-        "<i>📚 Menu Lệnh ZProject Bot</i>\n\n"
+        "<blockquote>📚 Menu Lệnh ZProject Bot</blockquote>\n\n"
         "•  <code>/start</code> - Start Zproject Bot.\n"
         "•  <code>/help</code>  - Show Menu Zproject Bot.\n"
         "•  <code>/time</code>  - Uptime Zproject Bot.\n"
@@ -451,7 +533,7 @@ def send_noti(message):
     if not text and not photo_file_id:
         return send_message_robustly(message.chat.id, text="⚠️ Sử dụng: <code>/noti &lt;nội dung&gt;</code> hoặc reply vào ảnh và dùng <code>/noti &lt;nội dung&gt;</code>.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
-    notify_caption = f"<b>[!] THÔNG BÁO TỪ ADMIN DEPZAI CUTO</b>\n\n{text}" if text else "<b>[!] THÔNG BÁO</b>"
+    notify_caption = f"<i>[!] THÔNG BÁO TỪ ADMIN DEPZAI CUTO</i>\n\n<blockquote>{text}</blockquote>" if text else "<b>[!] THÔNG BÁO</b>"
 
     with noti_states_lock: # Bảo vệ truy cập bot.noti_states
         bot.noti_states[message.chat.id] = {
@@ -500,7 +582,7 @@ def noti_add_button(call):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="Tuyệt vời! Hãy gửi cho tôi **tên của nút** bạn muốn hiển thị (ví dụ: `Tham gia nhóm`).",
+            text="Tuyệt vời! Hãy gửi cho tôi tên của nút bạn muốn hiển thị (ví dụ: `Tham gia nhóm`).",
             parse_mode="HTML"
         )
         # Đặt bước tiếp theo là chờ tên nút
@@ -539,7 +621,7 @@ def process_button_text(message):
 
     send_message_robustly(
         user_id,
-        f"Đã lưu tên nút: <b>{html_escape(button_text)}</b>. Bây giờ hãy gửi cho tôi **URL** mà nút sẽ dẫn đến (ví dụ: `https://t.me/zproject3`).",
+        f"Đã lưu tên nút: <b>{html_escape(button_text)}</b>. Bây giờ hãy gửi cho tôi URL mà nút sẽ dẫn đến (ví dụ: `https://t.me/zproject3`).",
         parse_mode="HTML",
         reply_to_message_id=message.message_id
     )
@@ -722,11 +804,11 @@ def spam_ngl_command(message):
             failed_count = data["data"].get("failed", 0)
 
             reply_text = (
-                f"<blockquote><b>✅ Đã Attack NGL Thành Công!</b></blockquote>\n\n"
+                f"<blockquote expandable><b>✅ Đã Attack NGL Thành Công!</b>\n\n"
                 f"<b>👤 Username:</b> <code>{username}</code>\n"
                 f"<b>💬 Tin nhắn:</b> <code>{tinnhan}</code>\n"
                 f"<b>🔢 Số lần gửi:</b> <code>{total_sent}</code>\n"
-                f"<b>❌ Thất bại:</b> <code>{failed_count}</code>"
+                f"<b>❌ Thất bại:</b> <code>{failed_count}</code></blockquote>"
             )
 
             send_message_robustly(
@@ -1332,7 +1414,7 @@ def ask_command(message):
 
     else: # Gửi tin nhắn thông thường nếu không quá dài hoặc không có code block riêng
         main_markup = build_reply_button(user_id, prompt, reply_id)
-        current_message_text = f"🤖 <i>ZProject [WORMGPT] trả lời:</i>\n\n"
+        current_message_text = f"<blockquote expandable>🤖 <i>ZProject [WORMGPT] trả lời:</i></blockquote>\n\n"
         
         combined_text_for_telegram = ""
         for part in response_parts_structured:
