@@ -327,87 +327,6 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
 
 # === LỆNH XỬ LÝ TIN NHẮN ===
 
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-import random
-
-pressed_info_buttons = set()
-
-@bot.message_handler(content_types=['new_chat_members'])
-def duongcongbangdev_welcome(message):
-    for member in message.new_chat_members:
-        # Bỏ dòng này để không lưu ID nhóm:
-        # save_group_to_file(message.chat.id) 
-
-        # Tạo markup bàn phím inline
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton("🧑‍💻 Admin", url="t.me/zproject2"),
-            InlineKeyboardButton("📢 Group Thông Báo", url="t.me/zproject3")
-        )
-        markup.add(
-            InlineKeyboardButton("💬 Group Chat Chính", url="t.me/zproject4"),
-            InlineKeyboardButton("ℹ️ Thông Tin Của Bạn", callback_data=f"user_info_{member.id}")
-        )
-        
-        video = random.choice(["https://i.pinimg.com/originals/ff/81/de/ff81dee1dcdd40d560569fe2ae94b6d3.gif"])
-        
-        welcome = (
-            f"<blockquote><code>❖ 🎉 ZprojectX Bot Welcome 🎉 ❖</code></blockquote>\n\n"
-            f"<blockquote><i>✡ Xin Chào 👋!</i> <a href='tg://user?id={member.id}'>{member.first_name}</a></blockquote>\n"
-            f"<blockquote><b>➩ Đã Tham Gia Nhóm: <b>{message.chat.title}</b></b></blockquote>\n"
-            f"<blockquote><i>➩ Số thành viên hiện tại: {bot.get_chat_members_count(message.chat.id)}</i></blockquote>\n"
-            "<blockquote><i>▣ Dùng /help để xem all lệnh của bot</i></blockquote>\n"
-            "<blockquote><code>▣ Dùng /phanhoi nội dung | Để Gửi Phản Hồi Lỗi Hoặc Chức Năng Cần Cải Tiến!</code></blockquote>\n"
-        )
-        
-        bot.send_video(
-            message.chat.id,
-            video=video,
-            caption=welcome,
-            reply_to_message_id=message.message_id,
-            supports_streaming=True,
-            parse_mode='HTML',
-            reply_markup=markup
-        )
-
-
-@bot.callback_query_handler(func=lambda call: True)
-def duongcongbangdev_handle_callback(call):
-    # Xử lý nút "Thông Tin Của Bạn"
-    if call.data.startswith("user_info_"):
-        user_id = int(call.data.split("_")[2])
-        message_id = call.message.message_id
-
-        # Kiểm tra xem nút info này đã được nhấn cho tin nhắn này chưa
-        if (message_id, user_id) in pressed_info_buttons:
-            bot.answer_callback_query(call.id, "Bạn Đã Xem Rồi Còn Có Ý Định Spam Thì Tuổi Nhé!", show_alert=True)
-            return
-
-        # Thêm ID tin nhắn và ID người dùng vào tập hợp các nút đã nhấn
-        pressed_info_buttons.add((message_id, user_id))
-
-        try:
-            member_info = bot.get_chat_member(call.message.chat.id, user_id)
-            user = member_info.user
-            
-            # Xây dựng tin nhắn thông tin đẹp mắt
-            user_info_message = (
-                f"<i>✨ Thông Tin Thành Viên ✨</i>\n\n"
-                f"👤 Tên: {user.first_name} {user.last_name if user.last_name else ''}\n"
-                f"🆔 ID: `{user.id}`\n"
-                f"👋 Username: @{user.username}\n" if user.username else f"👋 Username: Không có\n"
-                f"🔗 Link Profile: [Xem Profile](tg://user?id={user.id})\n"
-                f"🌟 Là Bot: {'Có' if user.is_bot else 'Không'}\n"
-                f"📈 Trạng Thái Trong Nhóm: {member_info.status.capitalize()}\n"
-                f"🗓️ Thời Gian Tham Gia: {member_info.until_date if member_info.until_date else 'Không xác định'}\n"
-            )
-            bot.send_message(call.message.chat.id, user_info_message, parse_mode='HTML')
-            bot.answer_callback_query(call.id, "Thông tin đã được gửi!")
-            
-        except Exception as e:
-            bot.answer_callback_query(call.id, f"Không thể lấy thông tin: {e}", show_alert=True)
-
 
 @bot.message_handler(commands=["start"])
 @increment_interaction_count
@@ -1732,6 +1651,86 @@ def back_to_mail_info_button(call):
     except Exception as e:
         logging.error(f"Lỗi không xác định khi quay lại thông tin mail: {e}")
         bot.answer_callback_query(call.id, "⚠️ Lỗi khi quay lại thông tin mail!", show_alert=True)
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import random
+
+pressed_info_buttons = set()
+
+@bot.message_handler(content_types=['new_chat_members'])
+def duongcongbangdev_welcome(message):
+    for member in message.new_chat_members:
+        # Bỏ dòng này để không lưu ID nhóm:
+        # save_group_to_file(message.chat.id) 
+
+        # Tạo markup bàn phím inline
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton("🧑‍💻 Admin", url="t.me/zproject2"),
+            InlineKeyboardButton("📢 Group Thông Báo", url="t.me/zproject3")
+        )
+        markup.add(
+            InlineKeyboardButton("💬 Group Chat Chính", url="t.me/zproject4"),
+            InlineKeyboardButton("ℹ️ Thông Tin Của Bạn", callback_data=f"user_info_{member.id}")
+        )
+        
+        video = random.choice(["https://i.pinimg.com/originals/ff/81/de/ff81dee1dcdd40d560569fe2ae94b6d3.gif"])
+        
+        welcome = (
+            f"<blockquote><code>❖ 🎉 ZprojectX Bot Welcome 🎉 ❖</code></blockquote>\n\n"
+            f"<blockquote><i>✡ Xin Chào 👋!</i> <a href='tg://user?id={member.id}'>{member.first_name}</a></blockquote>\n"
+            f"<blockquote><b>➩ Đã Tham Gia Nhóm: <b>{message.chat.title}</b></b></blockquote>\n"
+            f"<blockquote><i>➩ Số thành viên hiện tại: {bot.get_chat_members_count(message.chat.id)}</i></blockquote>\n"
+            "<blockquote><i>▣ Dùng /help để xem all lệnh của bot</i></blockquote>\n"
+            "<blockquote><code>▣ Dùng /phanhoi nội dung | Để Gửi Phản Hồi Lỗi Hoặc Chức Năng Cần Cải Tiến!</code></blockquote>\n"
+        )
+        
+        bot.send_video(
+            message.chat.id,
+            video=video,
+            caption=welcome,
+            reply_to_message_id=message.message_id,
+            supports_streaming=True,
+            parse_mode='HTML',
+            reply_markup=markup
+        )
+
+
+@bot.callback_query_handler(func=lambda call: True)
+def duongcongbangdev_handle_callback(call):
+    # Xử lý nút "Thông Tin Của Bạn"
+    if call.data.startswith("user_info_"):
+        user_id = int(call.data.split("_")[2])
+        message_id = call.message.message_id
+
+        # Kiểm tra xem nút info này đã được nhấn cho tin nhắn này chưa
+        if (message_id, user_id) in pressed_info_buttons:
+            bot.answer_callback_query(call.id, "Bạn Đã Xem Rồi Còn Có Ý Định Spam Thì Tuổi Nhé!", show_alert=True)
+            return
+
+        # Thêm ID tin nhắn và ID người dùng vào tập hợp các nút đã nhấn
+        pressed_info_buttons.add((message_id, user_id))
+
+        try:
+            member_info = bot.get_chat_member(call.message.chat.id, user_id)
+            user = member_info.user
+            
+            # Xây dựng tin nhắn thông tin đẹp mắt
+            user_info_message = (
+                f"<i>✨ Thông Tin Thành Viên ✨</i>\n\n"
+                f"👤 Tên: {user.first_name} {user.last_name if user.last_name else ''}\n"
+                f"🆔 ID: `{user.id}`\n"
+                f"👋 Username: @{user.username}\n" if user.username else f"👋 Username: Không có\n"
+                f"🔗 Link Profile: [Xem Profile](tg://user?id={user.id})\n"
+                f"🌟 Là Bot: {'Có' if user.is_bot else 'Không'}\n"
+                f"📈 Trạng Thái Trong Nhóm: {member_info.status.capitalize()}\n"
+                f"🗓️ Thời Gian Tham Gia: {member_info.until_date if member_info.until_date else 'Không xác định'}\n"
+            )
+            bot.send_message(call.message.chat.id, user_info_message, parse_mode='HTML')
+            bot.answer_callback_query(call.id, "Thông tin đã được gửi!")
+            
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"Không thể lấy thông tin: {e}", show_alert=True)
 
 # === Webhook Flask ===
 @app.route("/")
