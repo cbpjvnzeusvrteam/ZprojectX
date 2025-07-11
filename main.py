@@ -427,6 +427,13 @@ def tuongtac_command(message):
         reply_to_message_id=message.message_id
     )
 
+# Thêm vào phần Biến toàn cục và các Lock
+# ... (giữ nguyên các lock cũ) ...
+noti_states_lock = threading.Lock() # Thêm lock mới cho bot.noti_states
+bot.noti_states = {} # Lưu trạng thái tạo thông báo của admin
+
+# ... (các hàm khác) ...
+
 @bot.message_handler(commands=["noti"])
 @increment_interaction_count
 def send_noti(message):
@@ -446,42 +453,238 @@ def send_noti(message):
 
     notify_caption = f"<b>[!] THÔNG BÁO TỪ ADMIN DEPZAI CUTO</b>\n\n{text}" if text else "<b>[!] THÔNG BÁO</b>"
 
-    ok, fail = 0, 0
-    failed_ids = []
+    with noti_states_lock: # Bảo vệ truy cập bot.noti_states
+        bot.noti_states[message.chat.id] = {
+            'caption': notify_caption,
+            'photo_file_id': photo_file_id,
+            'original_message_id': message.message_id, # Lưu ID tin nhắn gốc để reply
+            'button_text': None,
+            'button_url': None
+        }
 
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("✅ Có", callback_data="noti_add_button|yes"),
+        InlineKeyboardButton("❌ Không", callback_data="noti_add_button|no")
+    )
+
+    send_message_robustly(
+        message.chat.id,
+        text="Bạn có muốn thêm nút (button) vào thông báo này không?",
+        reply_markup=markup,
+        parse_mode="HTML",
+        reply_to_message_id=message.message_id
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("noti_add_button|"))
+def noti_add_button(call):
+    """Xử lý việc admin chọn thêm nút vào thông báo."""
+    user_id = call.message.chat.id
+    
+    # Đảm bảo chỉ admin mới có thể dùng nút này
+    if user_id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "🚫 Bạn không có quyền sử dụng nút này.", show_alert=True)
+        return
+
+    _, choice = call.data.split("|")
+
+    with noti_states_lock:
+        noti_info = bot.noti_states.get(user_id)
+
+    if not noti_info:
+        bot.answer_callback_query(call.id, "Đã xảy ra lỗi hoặc phiên làm việc đã hết. Vui lòng thử lại lệnh /noti.", show_alert=True)
+        return
+
+    if choice == "yes":
+        bot.answer_callback_query(call.id, "Bạn đã chọn thêm nút.", show_alert=False)
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Tuyệt vời! Hãy gửi cho tôi **tên của nút** bạn muốn hiển thị (ví dụ: `Tham gia nhóm`).",
+            parse_mode="HTML"
+        )
+        # Đặt bước tiếp theo là chờ tên nút
+        bot.register_next_step_handler(call.message, process_button_text)
+    else: # choice == "no"
+        bot.answer_callback_query(call.id, "Bạn đã chọn không thêm nút.", show_alert=False)
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Đang gửi thông báo...",
+            parse_mode="HTML"
+        )
+        # Gửi thông báo ngay lập tức
+        send_final_notification(user_id)
+
+
+def process_button_text(message):
+    """Xử lý tên nút được admin gửi."""
+    user_id = message.chat.id
+    with noti_states_lock:
+        noti_info = bot.noti_states.get(user_id)
+
+    if not noti_info:
+        send_message_robustly(user_id, "Đã xảy ra lỗi hoặc phiên làm việc đã hết. Vui lòng thử lại lệnh /noti.", parse_mode="HTML")
+        return
+
+    button_text = message.text.strip()
+    if not button_text:
+        send_message_robustly(user_id, "⚠️ Tên nút không được để trống. Vui lòng gửi lại tên nút.", parse_mode="HTML", reply_to_message_id=message.message_id)
+        bot.register_next_step_handler(message, process_button_text)
+        return
+
+    with noti_states_lock:
+        noti_info['button_text'] = button_text
+        bot.noti_states[user_id] = noti_info # Cập nhật lại state
+
+    send_message_robustly(
+        user_id,
+        f"Đã lưu tên nút: <b>{html_escape(button_text)}</b>. Bây giờ hãy gửi cho tôi **URL** mà nút sẽ dẫn đến (ví dụ: `https://t.me/zproject3`).",
+        parse_mode="HTML",
+        reply_to_message_id=message.message_id
+    )
+    # Đặt bước tiếp theo là chờ URL
+    bot.register_next_step_handler(message, process_button_url)
+
+
+def process_button_url(message):
+    """Xử lý URL của nút được admin gửi và gửi thông báo cuối cùng."""
+    user_id = message.chat.id
+    with noti_states_lock:
+        noti_info = bot.noti_states.get(user_id)
+
+    if not noti_info:
+        send_message_robustly(user_id, "Đã xảy ra lỗi hoặc phiên làm việc đã hết. Vui lòng thử lại lệnh /noti.", parse_mode="HTML")
+        return
+
+    button_url = message.text.strip()
+    if not button_url or not (button_url.startswith("http://") or button_url.startswith("https://")):
+        send_message_robustly(user_id, "⚠️ URL không hợp lệ. Vui lòng gửi lại một URL đầy đủ (ví dụ: `https://t.me/zproject3`).", parse_mode="HTML", reply_to_message_id=message.message_id)
+        bot.register_next_step_handler(message, process_button_url)
+        return
+
+    with noti_states_lock:
+        noti_info['button_url'] = button_url
+        bot.noti_states[user_id] = noti_info # Cập nhật lại state
+
+    send_message_robustly(
+        user_id,
+        "Đã lưu URL. Đang tiến hành gửi thông báo với nút...",
+        parse_mode="HTML",
+        reply_to_message_id=message.message_id
+    )
+
+    send_final_notification(user_id)
+
+
+def send_final_notification(admin_id):
+    """Hàm thực hiện gửi thông báo cuối cùng tới tất cả người nhận."""
+    with noti_states_lock:
+        noti_info = bot.noti_states.pop(admin_id, None) # Lấy và xóa state
+
+    if not noti_info:
+        send_message_robustly(admin_id, "Đã xảy ra lỗi khi gửi thông báo. Thông tin không tồn tại.", parse_mode="HTML")
+        return
+
+    notify_caption = noti_info['caption']
+    photo_file_id = noti_info['photo_file_id']
+    button_text = noti_info['button_text']
+    button_url = noti_info['button_url']
+    original_message_id = noti_info['original_message_id']
+
+    markup = None
+    if button_text and button_url:
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton(button_text, url=button_url))
+
+    ok_users_count, ok_groups_count = 0, 0
+    failed_count = 0
+    failed_details = [] # Lưu chi tiết lỗi (ID, username/title, lỗi)
+    
     with user_group_info_lock: # Đọc biến được bảo vệ
-        all_recipients = USER_IDS.union({g["id"] for g in GROUP_INFOS})
+        all_users = list(USER_IDS)
+        all_groups = list(GROUP_INFOS)
 
-    for uid in all_recipients:
+    # Gửi tới tất cả người dùng
+    for uid in all_users:
         try:
             if photo_file_id:
                 bot.send_photo(
                     chat_id=uid,
                     photo=photo_file_id,
                     caption=notify_caption,
-                    parse_mode="HTML"
+                    parse_mode="HTML",
+                    reply_markup=markup
                 )
             else:
                 bot.send_message(
                     chat_id=uid,
                     text=notify_caption,
                     parse_mode="HTML",
-                    disable_web_page_preview=True
+                    disable_web_page_preview=True,
+                    reply_markup=markup
                 )
-            ok += 1
+            ok_users_count += 1
             time.sleep(0.1)
         except Exception as e:
-            fail += 1
-            failed_ids.append(uid)
-            logging.error(f"Failed to send notification to {uid}: {e}")
+            failed_count += 1
+            failed_details.append(f"Người dùng ID: <code>{uid}</code> (Lỗi: {html_escape(str(e))})")
+            logging.error(f"Failed to send notification to user {uid}: {e}")
+
+    # Gửi tới tất cả nhóm
+    for group in all_groups:
+        group_id = group["id"]
+        group_title = group.get("title", "Không rõ tên nhóm")
+        group_username = group.get("username", "") # Có thể không có username
+        
+        try:
+            if photo_file_id:
+                bot.send_photo(
+                    chat_id=group_id,
+                    photo=photo_file_id,
+                    caption=notify_caption,
+                    parse_mode="HTML",
+                    reply_markup=markup
+                )
+            else:
+                bot.send_message(
+                    chat_id=group_id,
+                    text=notify_caption,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                    reply_markup=markup
+                )
+            ok_groups_count += 1
+            time.sleep(0.1)
+        except Exception as e:
+            failed_count += 1
+            group_display = f"{group_title} (ID: <code>{group_id}</code>)"
+            if group_username:
+                group_display += f" (@{group_username})"
+            failed_details.append(f"Nhóm: {group_display} (Lỗi: {html_escape(str(e))})")
+            logging.error(f"Failed to send notification to group {group_id}: {e}")
+
+    total_sent = ok_users_count + ok_groups_count
+    
+    result_text = (
+        f"✅ Gửi thành công: {total_sent} tin nhắn (Đến <b>{ok_users_count}</b> người dùng và <b>{ok_groups_count}</b> nhóm).\n"
+        f"❌ Gửi thất bại: {failed_count} tin nhắn.\n\n"
+    )
+
+    if failed_count > 0:
+        result_text += "<b>⚠️ Chi tiết thất bại:</b>\n"
+        for detail in failed_details:
+            result_text += f"- {detail}\n"
+    else:
+        result_text += "🎉 Tất cả thông báo đã được gửi thành công!"
 
     send_message_robustly(
-        message.chat.id,
-        text=f"✅ Gửi thành công: {ok} tin nhắn.\n❌ Gửi thất bại: {fail} tin nhắn.\n"
-             f"Danh sách ID thất bại: <code>{failed_ids}</code>",
+        admin_id,
+        text=result_text,
         parse_mode="HTML",
-        reply_to_message_id=message.message_id
+        reply_to_message_id=original_message_id # Reply về tin nhắn /noti gốc
     )
+
 
 @bot.message_handler(commands=["ngl"])
 @increment_interaction_count
