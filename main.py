@@ -391,9 +391,6 @@ def fetch_with_retry(url, retries=3, timeout=30):
 @group_membership_required # Áp dụng decorator
 def handle_in4ff_command(message):
     parts = message.text.strip().split()
-    # parts[0] sẽ là "/in4ff"
-    # parts[1] sẽ là region
-    # parts[2] sẽ là uid
 
     if len(parts) != 3:
         send_message_robustly(
@@ -404,38 +401,49 @@ def handle_in4ff_command(message):
         )
         return
 
-    region = html_escape(parts[1]) # Escape để tránh lỗi HTML injection
-    uid = html_escape(parts[2]) # Escape để tránh lỗi HTML injection
+    region = html_escape(parts[1])
+    uid = html_escape(parts[2])
 
-    send_message_robustly(
+    # Gửi tin nhắn chờ và lưu message_id
+    waiting_message = send_message_robustly(
         message.chat.id,
         text=f"<blockquote>⏳ <i>Đang tìm thông tin tài khoản cho UID</i> <code>{uid}</code>...</blockquote>",
         parse_mode="HTML",
         reply_to_message_id=message.message_id
     )
+    
+    # Kiểm tra nếu gửi tin nhắn chờ thành công, lưu message_id của nó
+    if waiting_message:
+        waiting_message_id = waiting_message.message_id
+    else:
+        # Xử lý trường hợp không gửi được tin nhắn chờ (rất hiếm)
+        logging.error(f"Failed to send waiting message for UID {uid}")
+        return
 
     info_url = f"https://info-ffayaacte.vercel.app/player-info?uid={uid}&region={region}"
-    outfit_url = f"https://xp-outfit-v1.vercel.app/outfit-image?uid={uid}&region={region}&key=XPxFF"
+    # outfit_url = f"https://xp-outfit-v1.vercel.app/outfit-image?uid={uid}&region={region}&key=XPxFF" # Bỏ dòng này
 
     info_res = fetch_with_retry(info_url, retries=3, timeout=30)
     
     if not info_res:
-        send_message_robustly(
+        # Chỉnh sửa tin nhắn chờ thành thông báo lỗi
+        edit_message_robustly(
             message.chat.id,
+            waiting_message_id,
             text="<blockquote>❌ <b>Không thể tìm nạp dữ liệu từ API sau 3 lần thử lại.</b> Vui lòng thử lại sau hoặc kiểm tra lại UID/Region.</blockquote>",
-            parse_mode="HTML",
-            reply_to_message_id=message.message_id
+            parse_mode="HTML"
         )
         return
     
     if not isinstance(info_res, dict) or "basicInfo" not in info_res:
         error_msg = info_res.get("message", "Cấu trúc dữ liệu API trả về không hợp lệ hoặc thiếu thông tin cơ bản.") if isinstance(info_res, dict) else "Phản hồi từ API không phải là JSON hợp lệ."
-        send_message_robustly(
+        # Chỉnh sửa tin nhắn chờ thành thông báo lỗi
+        edit_message_robustly(
             message.chat.id,
+            waiting_message_id,
             text=f"<blockquote>❌ <b>Lỗi dữ liệu từ API:</b> <i>{html_escape(error_msg)}</i>\n"
                  f"Vui lòng kiểm tra lại UID hoặc liên hệ hỗ trợ nếu lỗi này tiếp tục xảy ra.</blockquote>",
-            parse_mode="HTML",
-            reply_to_message_id=message.message_id
+            parse_mode="HTML"
         )
         logging.error(f"API returned invalid data for UID {uid}, Region {region}: {info_res}")
         return
@@ -450,7 +458,6 @@ def handle_in4ff_command(message):
     # Hàm trợ giúp để lấy giá trị an toàn và escape HTML
     def get_safe_value(data_dict, key, default="N/A"):
         value = data_dict.get(key, default)
-        # Nếu là list (ví dụ: skills, weapon skins), join chúng lại
         if isinstance(value, list):
             return ", ".join(map(str, value)) if value else default
         return html_escape(str(value))
@@ -523,38 +530,40 @@ def handle_in4ff_command(message):
 ⚡ <b>Điểm CS:</b> <code>{get_safe_value(captain, "csRankingPoints")}</code>
 
 ━━━━━━━━━━━━━━━━━━━━
-<i>👑 Chủ sở hữu:</i> @zproject2  
+<i>👑 ADMIN:</i> @zproject2  
 ⚡ <i>NHÓM:</i> <a href="https://t.me/zproject3">Tham gia ngay</a>
 ━━━━━━━━━━━━━━━━━━━━
 </blockquote>
 """
-    send_message_robustly(message.chat.id, msg, parse_mode="HTML", reply_to_message_id=message.message_id)
+    # Chỉnh sửa tin nhắn chờ thành kết quả
+    edit_message_robustly(message.chat.id, waiting_message_id, msg, parse_mode="HTML")
 
-    try:
-        img_res = requests.get(outfit_url, timeout=30)
-        if img_res.headers.get("Content-Type", "").startswith("image/"):
-            send_message_robustly(
-                chat_id=message.chat.id,
-                photo=outfit_url,
-                caption=f"<blockquote>🖼️ <b>Hình ảnh trang phục của</b> <code>{get_safe_value(basic, 'nickname')}</code></blockquote>",
-                parse_mode="HTML",
-                reply_to_message_id=message.message_id
-            )
-        else:
-            send_message_robustly(
-                message.chat.id,
-                text="<blockquote>⚠️ <b>Hình ảnh trang phục không có sẵn hoặc định dạng không hợp lệ.</b></blockquote>",
-                parse_mode="HTML",
-                reply_to_message_id=message.message_id
-            )
-    except Exception as e:
-        logging.error(f"Failed to fetch/send outfit image for UID {uid}: {e}")
-        send_message_robustly(
-            message.chat.id,
-            text="<blockquote>⚠️ <b>Không thể tìm nạp hoặc gửi hình ảnh trang phục.</b></blockquote>",
-            parse_mode="HTML",
-            reply_to_message_id=message.message_id
-        )
+    # Bỏ toàn bộ khối mã liên quan đến hình ảnh trang phục
+    # try:
+    #     img_res = requests.get(outfit_url, timeout=30)
+    #     if img_res.headers.get("Content-Type", "").startswith("image/"):
+    #         send_message_robustly(
+    #             chat_id=message.chat.id,
+    #             photo=outfit_url,
+    #             caption=f"<blockquote>🖼️ <b>Hình ảnh trang phục của</b> <code>{get_safe_value(basic, 'nickname')}</code></blockquote>",
+    #             parse_mode="HTML",
+    #             reply_to_message_id=message.message_id
+    #         )
+    #     else:
+    #         send_message_robustly(
+    #             message.chat.id,
+    #             text="<blockquote>⚠️ <b>Hình ảnh trang phục không có sẵn hoặc định dạng không hợp lệ.</b></blockquote>",
+    #             parse_mode="HTML",
+    #             reply_to_message_id=message.message_id
+    #         )
+    # except Exception as e:
+    #     logging.error(f"Failed to fetch/send outfit image for UID {uid}: {e}")
+    #     send_message_robustly(
+    #         message.chat.id,
+    #         text="<blockquote>⚠️ <b>Không thể tìm nạp hoặc gửi hình ảnh trang phục.</b></blockquote>",
+    #         parse_mode="HTML",
+    #         reply_to_message_id=message.message_id
+    #     )
 
 @bot.message_handler(commands=["start"])
 @increment_interaction_count
