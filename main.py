@@ -477,25 +477,36 @@ def send_like(message):
 
     wait_msg = bot.reply_to(message, "⏳️")
 
-    url = "https://rzx-likes-api-1.onrender.com/like"
-    params = {"uid": uid, "server_name": "me"}
+    url = "https://likefreefirecommunity-ggblueshark.vercel.app/like"
+    params = {"uid": uid, "server_name": "vn", "key": "ayacte"}
 
     try:
         response = requests.get(url, params=params)
         if response.status_code == 200:
             try:
                 json_data = response.json()
-                buff_info_message = f"""
-                <blockquote>
-                    <b>Thông Tin Buff Like FF</b>\n
-                    <i>Trạng thái:</i> <b>Thành công</b>\n
-                    <i>UID:</i> <b>{uid}</b>\n
-                    <i>DATA</i>\n
-                    <pre>{json.dumps(json_data, indent=2, ensure_ascii=False)}</pre>
-                </blockquote>
-                """
-                bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="✅️")
-                bot.reply_to(message, buff_info_message, parse_mode="HTML")
+                if json_data.get("status") == 2:
+                    buff_info_message = f"""
+                    <blockquote>
+                        <b>Thông Tin Buff Like FF</b>\n
+                        <i>Trạng thái:</i> <b>Thành công</b>\n
+                        <i>UID:</i> <b>{uid}</b>\n
+                        <i>DATA</i>\n
+                        <pre>{json.dumps(json_data, indent=2, ensure_ascii=False)}</pre>
+                    </blockquote>
+                    """
+                    bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="✅️")
+                    bot.reply_to(message, buff_info_message, parse_mode="HTML")
+                else:
+                    error_message = json_data.get("message", "Yêu cầu thất bại.")
+                    bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="❌️")
+                    bot.reply_to(message, f"""
+                    <blockquote>
+                        <b>Thông tin buff</b>\n
+                        <i>Trạng thái:</i> <b>Thất bại</b>\n
+                        <i>Lỗi:</i> <i>{error_message}</i>
+                    </blockquote>
+                    """, parse_mode="HTML")
             except Exception:
                 bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="✅️")
                 bot.reply_to(message, f"""
@@ -539,6 +550,7 @@ def send_like(message):
             <i>Lỗi hệ thống:</i> <i>{e}</i>
         </blockquote>
         """, parse_mode="HTML")
+
 
 @bot.message_handler(commands=["noti"])
 @increment_interaction_count
