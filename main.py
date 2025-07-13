@@ -615,19 +615,20 @@ def help_command(message):
     sync_chat_to_server(message.chat)
     help_text = (
         "<blockquote>📚 Menu Lệnh ZProject Bot</blockquote>\n\n"
-        "•  <code>/start</code> - Start Zproject Bot.\n"
-        "•  <code>/help</code>  - Show Menu Zproject Bot.\n"
-        "•  <code>/time</code>  - Uptime Zproject Bot.\n"
-        "•  <code>/ask &lt;câu hỏi&gt;</code> - Hỏi AI Được Tích Hợp WormGpt V2.\n"
-        "•  <code>/ngl &lt;username&gt; &lt;tin_nhắn&gt; &lt;số_lần&gt;</code> - Spam Ngl.\n"
-        "•  <code>/like &lt;UID FF&gt;</code> - Buff Like Free Fire.\n"
-        "•  <code>/in4ff &lt;REGION UID FF&gt;</code> - Check info Account FF\n"
-        "•  <code>/tuongtac</code> - Xem tổng số lượt tương tác của bot.\n"
-        "•  <code>/phanhoi</code> - Gửi Phản Hồi Lỗi Hoặc Chức Năng Cần Cải Tiến.\n"
-        "•  <code>/ping</code> - Xem Ping Sever Bot.\n"
-        "•  <code>/mail10p</code> - Tạo mail 10 phút dùng 1 lần.\n"
-        "•  <code>/hopthu</code> - Xem hộp thư của mail 10 phút đã tạo.\n"
-        "•  <code>/xoamail10p</code> - Xóa mail 10 phút hiện tại của bạn."
+        "<blockquote>•  <code>/start</code> - Start Zproject Bot</blockquote>\n"
+        "<blockquote>•  <code>/help</code>  - Show Menu Zproject Bot</blockquote>\n"
+        "<blockquote>•  <code>/time</code>  - Uptime Zproject Bot</blockquote>\n"
+        "<blockquote>•  <code>/ask &lt;câu hỏi&gt;</code> - Hỏi AI Được Tích Hợp WormGpt V2</blockquote>\n"
+        "<blockquote>•  <code>/ngl &lt;username&gt; &lt;tin_nhắn&gt; &lt;số_lần&gt;</code> - Spam Ngl</blockquote>\n"
+        "<blockquote>•  <code>/like &lt;UID FF&gt;</code> - Buff Like Free Fire</blockquote>\n"
+        "<blockquote>•  <code>/kbff &lt;UID FF&gt;</code> - Spam Kết Bạn Free Fire</blockquote>\n"
+        "<blockquote>•  <code>/in4ff &lt;REGION UID FF&gt;</code> - Check info Account FF</blockquote>\n"
+        "<blockquote>•  <code>/tuongtac</code> - Xem tổng số lượt tương tác của bot</blockquote>\n"
+        "<blockquote>•  <code>/phanhoi</code> - Gửi Phản Hồi Lỗi Hoặc Chức Năng Cần Cải Tiến</blockquote>\n"
+        "<blockquote>•  <code>/ping</code> - Xem Ping Sever Bot</blockquote>\n"
+        "<blockquote>•  <code>/mail10p</code> - Tạo mail 10 phút dùng 1 lần</blockquote>\n"
+        "<blockquote>•  <code>/hopthu</code> - Xem hộp thư của mail 10 phút đã tạo</blockquote>\n"
+        "<blockquote>•  <code>/xoamail10p</code> - Xóa mail 10 phút hiện tại của bạn</blockquote>"
     )
     send_message_robustly(
         chat_id=message.chat.id,
@@ -1122,6 +1123,120 @@ def send_feedback_to_admin(message):
         logging.error(f"Lỗi khi gửi phản hồi đến admin: {e}")
         send_message_robustly(message.chat.id, text="❌ Đã xảy ra lỗi khi gửi phản hồi. Vui lòng thử lại sau.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
+
+# Giả định các biến này đã được định nghĩa ở nơi khác trong code của bạn
+@bot.message_handler(commands=["kbff"])
+@increment_interaction_count
+@group_membership_required # Áp dụng decorator nếu cần
+def request_add_friend(message):
+    logging.info(f"Received /kbff from user {message.from_user.id} in chat {message.chat.id}")
+    sync_chat_to_server(message.chat)
+    
+    command_parts = message.text.split(maxsplit=1)
+    if len(command_parts) < 2:
+        return send_message_robustly(
+            message.chat.id,
+            text="⚠️ Vui lòng nhập UID cần Spam kết bạn. Ví dụ: <code>/kbff 2211865132</code>",
+            parse_mode="HTML",
+            reply_to_message_id=message.message_id
+        )
+
+    uid_to_add = command_parts[1].strip()
+
+    if not uid_to_add.isdigit():
+        return send_message_robustly(
+            message.chat.id,
+            text="⚠️ UID phải là một dãy số. Ví dụ: <code>/kbff 2211865132</code>",
+            parse_mode="HTML",
+            reply_to_message_id=message.message_id
+        )
+
+    # Gửi tin nhắn "Vui lòng chờ" và lưu message_id để chỉnh sửa sau
+    waiting_message = send_message_robustly(
+        message.chat.id,
+        text="⏳",
+        parse_mode="HTML",
+        reply_to_message_id=message.message_id
+    )
+
+    if not waiting_message: # Xử lý trường hợp gửi tin nhắn chờ thất bại
+        logging.error(f"Failed to send waiting message for /kbff from user {message.from_user.id}")
+        return
+
+    # Chuẩn bị URL API
+    api_url = f"https://zproject-bot-spam.onrender.com/addfriend?uid={uid_to_add}"
+
+    try:
+        response = requests.get(api_url)
+        response.raise_for_status()  # Nâng lỗi cho các mã trạng thái HTTP xấu (4xx hoặc 5xx)
+        api_data = response.json()
+
+        success_count = api_data.get("success_count", 0)
+        failed_count = api_data.get("failed_count", 0)
+        admin_info = api_data.get("admin", "N/A")
+
+        result_text = (
+            f"<b>✅ ATTACK SPAM KB FF</b>\n\n"
+            f"<blockquote>"
+            f"<b>UID SPAM KB:</b> <code>{uid_to_add}</code>\n"
+            f"<b>Thành công:</b> <code>{success_count}</code>\n"
+            f"<b>Thất bại:</b> <code>{failed_count}</code>\n"
+            f"<b>Admin API:</b> {html_escape(admin_info)}\n"
+            f"</blockquote>"
+        )
+        
+        # Chỉnh sửa tin nhắn "Vui lòng chờ" thành kết quả cuối cùng
+        bot.edit_message_text(
+            chat_id=waiting_message.chat.id,
+            message_id=waiting_message.message_id,
+            text=result_text,
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Lỗi khi gọi API addfriend cho UID {uid_to_add}: {e}")
+        error_message = (
+            f"❌ Đã xảy ra lỗi khi kết nối đến dịch vụ kết bạn.\n\n"
+            f"<blockquote>"
+            f"Vui lòng thử lại sau hoặc liên hệ quản trị viên."
+            f"</blockquote>"
+        )
+        bot.edit_message_text(
+            chat_id=waiting_message.chat.id,
+            message_id=waiting_message.message_id,
+            text=error_message,
+            parse_mode="HTML"
+        )
+    except ValueError as e:
+        logging.error(f"Lỗi phân tích JSON từ API addfriend cho UID {uid_to_add}: {e}")
+        error_message = (
+            f"❌ Phản hồi từ dịch vụ kết bạn không hợp lệ.\n\n"
+            f"<blockquote>"
+            f"Vui lòng thử lại sau hoặc liên hệ quản trị viên."
+            f"</blockquote>"
+        )
+        bot.edit_message_text(
+            chat_id=waiting_message.chat.id,
+            message_id=waiting_message.message_id,
+            text=error_message,
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logging.error(f"Lỗi không xác định khi xử lý /kbff cho UID {uid_to_add}: {e}")
+        error_message = (
+            f"❌ Đã xảy ra lỗi không mong muốn.\n\n"
+            f"<blockquote>"
+            f"Vui lòng thử lại sau hoặc liên hệ quản trị viên."
+            f"</blockquote>"
+        )
+        bot.edit_message_text(
+            chat_id=waiting_message.chat.id,
+            message_id=waiting_message.message_id,
+            text=error_message,
+            parse_mode="HTML"
+        )
+        
 @bot.message_handler(commands=["adminph"])
 @increment_interaction_count
 # Không cần group_membership_required ở đây vì đây là lệnh dành riêng cho Admin
