@@ -529,35 +529,44 @@ def handle_in4ff_command(message):
 </blockquote>
 """
     # ... (previous code)
+    # ... (các phần code phía trên)
 
     send_message_robustly(message.chat.id, msg, parse_mode="HTML", reply_to_message_id=message.message_id)
 
-    # Directly send the photo using the outfit_url
+    # Trực tiếp gửi ảnh bằng outfit_url
     try:
-        # Before sending the photo, it's good practice to quickly check if the URL returns an image.
-        # This prevents Telegram from trying to download a non-image file.
-        # We'll use a HEAD request for efficiency.
+        # Sử dụng HEAD request để kiểm tra header mà không tải toàn bộ ảnh
         head_response = requests.head(outfit_url, timeout=10)
+
+        # Ghi log chi tiết về phản hồi HEAD
+        logging.info(f"HEAD response for outfit_url: {outfit_url}")
+        logging.info(f"Status Code: {head_response.status_code}")
+        logging.info(f"Content-Type: {head_response.headers.get('Content-Type')}")
+
         if head_response.status_code == 200 and head_response.headers.get('Content-Type', '').startswith('image/'):
             send_message_robustly(
                 chat_id=message.chat.id,
-                photo=outfit_url,  # Directly use the URL here
+                photo=outfit_url,  # Trực tiếp sử dụng URL ở đây
                 caption=f"<blockquote>🖼️ <b>Hình ảnh trang phục của</b> <code>{get_safe_value(basic, 'nickname')}</code></blockquote>",
                 parse_mode="HTML",
                 reply_to_message_id=message.message_id
             )
         else:
+            # Nếu không phải là ảnh hợp lệ, in ra thêm thông tin để debug
+            error_details = f"Status: {head_response.status_code}, Content-Type: {head_response.headers.get('Content-Type', 'N/A')}"
             send_message_robustly(
                 message.chat.id,
-                text="<blockquote>⚠️ <b>Hình ảnh trang phục không có sẵn hoặc định dạng không hợp lệ.</b></blockquote>",
+                text=f"<blockquote>⚠️ <b>Hình ảnh trang phục không có sẵn hoặc định dạng không hợp lệ.</b> Chi tiết: <code>{html_escape(error_details)}</code></blockquote>",
                 parse_mode="HTML",
                 reply_to_message_id=message.message_id
             )
+            logging.warning(f"Outfit image not available or invalid format for UID {uid}, Region {region}. Details: {error_details}")
+
     except requests.exceptions.RequestException as e:
         logging.error(f"Failed to check or send outfit image for UID {uid}: {e}")
         send_message_robustly(
             message.chat.id,
-            text="<blockquote>⚠️ <b>Không thể tìm nạp hoặc gửi hình ảnh trang phục.</b></blockquote>",
+            text="<blockquote>⚠️ <b>Không thể tìm nạp hoặc gửi hình ảnh trang phục do lỗi kết nối.</b></blockquote>",
             parse_mode="HTML",
             reply_to_message_id=message.message_id
         )
