@@ -415,7 +415,7 @@ def handle_in4ff_command(message):
     )
 
     info_url = f"https://info-ffayaacte.vercel.app/player-info?uid={uid}&region={region}"
-    outfit_url = f"https://xp-outfit-v1.vercel.app/outfit-image?uid={uid}&region={region}&key=XPxFF"
+    outfit_url = f"https://ff-outfit-image.vercel.app/outfit-image?uid={uid}&region={region}"
 
     info_res = fetch_with_retry(info_url, retries=3, timeout=30)
     
