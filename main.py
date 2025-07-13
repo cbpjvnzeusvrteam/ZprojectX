@@ -361,35 +361,6 @@ def group_membership_required(func):
     return wrapper
 
 # === LỆNH XỬ LÝ TIN NHẮN ===
-import requests
-import time
-import logging
-from datetime import datetime
-
-# Assuming send_message_robustly, increment_interaction_count, and group_membership_required
-# are defined elsewhere in your code.
-# For demonstration, I'll include dummy definitions if they're not provided.
-
-# Dummy definitions for demonstration purposes if they are not in your existing code
-def send_message_robustly(chat_id, text=None, photo=None, parse_mode=None, reply_to_message_id=None):
-    if text:
-        print(f"Sending message to {chat_id}: {text}")
-    if photo:
-        print(f"Sending photo to {chat_id}: {photo}")
-
-def increment_interaction_count(func):
-    def wrapper(*args, **kwargs):
-        print("Interaction count incremented (dummy)")
-        return func(*args, **kwargs)
-    return wrapper
-
-def group_membership_required(func):
-    def wrapper(*args, **kwargs):
-        print("Group membership checked (dummy)")
-        return func(*args, **kwargs)
-    return wrapper
-
-# --- End of dummy definitions ---
 
 # Format timestamp
 def format_timestamp(ts):
@@ -415,12 +386,14 @@ def fetch_with_retry(url, retries=3, timeout=30):
     return None
 
 # Lệnh /in4ff
-# Replace @bot.message_handler with your actual bot instance decorator
-# For example: @your_bot_instance.message_handler(commands=['in4ff'])
+@bot.message_handler(commands=['in4ff'])
 @increment_interaction_count
-@group_membership_required # Apply decorator
+@group_membership_required # Áp dụng decorator
 def handle_in4ff_command(message):
     parts = message.text.strip().split()
+    # parts[0] sẽ là "/in4ff"
+    # parts[1] sẽ là region
+    # parts[2] sẽ là uid
 
     if len(parts) != 3:
         send_message_robustly(
@@ -431,55 +404,39 @@ def handle_in4ff_command(message):
         )
         return
 
-    region = html_escape(parts[1])
-    uid = html_escape(parts[2])
+    region = html_escape(parts[1]) # Escape để tránh lỗi HTML injection
+    uid = html_escape(parts[2]) # Escape để tránh lỗi HTML injection
 
-    # Send initial "waiting" message and store its message_id
-    initial_message = send_message_robustly(
+    send_message_robustly(
         message.chat.id,
         text=f"<blockquote>⏳ <i>Đang tìm thông tin tài khoản cho UID</i> <code>{uid}</code>...</blockquote>",
         parse_mode="HTML",
         reply_to_message_id=message.message_id
     )
 
-    # Assuming initial_message has an attribute like .message_id
-    # If your send_message_robustly doesn't return the message object,
-    # you might need to adjust this part based on your library's capabilities
-    # or ensure send_message_robustly updates a global variable with the last message ID.
-    if initial_message and hasattr(initial_message, 'message_id'):
-        message_to_edit_id = initial_message.message_id
-    else:
-        # Fallback if message_id isn't easily accessible, or if robustly doesn't return it
-        # You might need to log a warning or send a new message instead of editing.
-        message_to_edit_id = None
-        logging.warning("Could not get message_id for the initial 'waiting' message. Result will be a new message.")
-
-
     info_url = f"https://info-ffayaacte.vercel.app/player-info?uid={uid}&region={region}"
+    outfit_url = f"https://xp-outfit-v1.vercel.app/outfit-image?uid={uid}&region={region}&key=XPxFF"
 
     info_res = fetch_with_retry(info_url, retries=3, timeout=30)
-
+    
     if not info_res:
-        error_text = "<blockquote>❌ <b>Không thể tìm nạp dữ liệu từ API sau 3 lần thử lại.</b> Vui lòng thử lại sau hoặc kiểm tra lại UID/Region.</blockquote>"
-        if message_to_edit_id:
-            # Assuming bot.edit_message_text is available
-            # If not, you'll need to adapt this to your bot library's method for editing messages.
-            # Example for pyTelegramBotAPI: bot.edit_message_text(chat_id=message.chat.id, message_id=message_to_edit_id, text=error_text, parse_mode="HTML")
-            print(f"Editing message {message_to_edit_id} with error: {error_text}")
-            # Replace with actual bot.edit_message_text call for your library
-        else:
-            send_message_robustly(message.chat.id, text=error_text, parse_mode="HTML", reply_to_message_id=message.message_id)
+        send_message_robustly(
+            message.chat.id,
+            text="<blockquote>❌ <b>Không thể tìm nạp dữ liệu từ API sau 3 lần thử lại.</b> Vui lòng thử lại sau hoặc kiểm tra lại UID/Region.</blockquote>",
+            parse_mode="HTML",
+            reply_to_message_id=message.message_id
+        )
         return
-
+    
     if not isinstance(info_res, dict) or "basicInfo" not in info_res:
         error_msg = info_res.get("message", "Cấu trúc dữ liệu API trả về không hợp lệ hoặc thiếu thông tin cơ bản.") if isinstance(info_res, dict) else "Phản hồi từ API không phải là JSON hợp lệ."
-        error_text = f"<blockquote>❌ <b>Lỗi dữ liệu từ API:</b> <i>{html_escape(error_msg)}</i>\n" \
-                     f"Vui lòng kiểm tra lại UID hoặc liên hệ hỗ trợ nếu lỗi này tiếp tục xảy ra.</blockquote>"
-        if message_to_edit_id:
-            print(f"Editing message {message_to_edit_id} with error: {error_text}")
-            # Replace with actual bot.edit_message_text call for your library
-        else:
-            send_message_robustly(message.chat.id, text=error_text, parse_mode="HTML", reply_to_message_id=message.message_id)
+        send_message_robustly(
+            message.chat.id,
+            text=f"<blockquote>❌ <b>Lỗi dữ liệu từ API:</b> <i>{html_escape(error_msg)}</i>\n"
+                 f"Vui lòng kiểm tra lại UID hoặc liên hệ hỗ trợ nếu lỗi này tiếp tục xảy ra.</blockquote>",
+            parse_mode="HTML",
+            reply_to_message_id=message.message_id
+        )
         logging.error(f"API returned invalid data for UID {uid}, Region {region}: {info_res}")
         return
 
@@ -490,9 +447,10 @@ def handle_in4ff_command(message):
     pet = info_res.get("petInfo", {})
     social = info_res.get("socialInfo", {})
 
-    # Helper function to safely get values and escape HTML
+    # Hàm trợ giúp để lấy giá trị an toàn và escape HTML
     def get_safe_value(data_dict, key, default="N/A"):
         value = data_dict.get(key, default)
+        # Nếu là list (ví dụ: skills, weapon skins), join chúng lại
         if isinstance(value, list):
             return ", ".join(map(str, value)) if value else default
         return html_escape(str(value))
@@ -565,20 +523,38 @@ def handle_in4ff_command(message):
 ⚡ <b>Điểm CS:</b> <code>{get_safe_value(captain, "csRankingPoints")}</code>
 
 ━━━━━━━━━━━━━━━━━━━━
-<i>👑 Admin:</i> @zproject2
+<i>👑 Chủ sở hữu:</i> @zproject2  
 ⚡ <i>NHÓM:</i> <a href="https://t.me/zproject3">Tham gia ngay</a>
 ━━━━━━━━━━━━━━━━━━━━
 </blockquote>
 """
-    if message_to_edit_id:
-        # Edit the initial "waiting" message with the full info
-        # Replace with actual bot.edit_message_text call for your library
-        print(f"Editing message {message_to_edit_id} with full info:\n{msg}")
-    else:
-        # If unable to edit, send as a new message
-        send_message_robustly(message.chat.id, msg, parse_mode="HTML", reply_to_message_id=message.message_id)
+    send_message_robustly(message.chat.id, msg, parse_mode="HTML", reply_to_message_id=message.message_id)
 
-    # Removed the outfit image fetching and sending as per request
+    try:
+        img_res = requests.get(outfit_url, timeout=30)
+        if img_res.headers.get("Content-Type", "").startswith("image/"):
+            send_message_robustly(
+                chat_id=message.chat.id,
+                photo=outfit_url,
+                caption=f"<blockquote>🖼️ <b>Hình ảnh trang phục của</b> <code>{get_safe_value(basic, 'nickname')}</code></blockquote>",
+                parse_mode="HTML",
+                reply_to_message_id=message.message_id
+            )
+        else:
+            send_message_robustly(
+                message.chat.id,
+                text="<blockquote>⚠️ <b>Hình ảnh trang phục không có sẵn hoặc định dạng không hợp lệ.</b></blockquote>",
+                parse_mode="HTML",
+                reply_to_message_id=message.message_id
+            )
+    except Exception as e:
+        logging.error(f"Failed to fetch/send outfit image for UID {uid}: {e}")
+        send_message_robustly(
+            message.chat.id,
+            text="<blockquote>⚠️ <b>Không thể tìm nạp hoặc gửi hình ảnh trang phục.</b></blockquote>",
+            parse_mode="HTML",
+            reply_to_message_id=message.message_id
+        )
 
 @bot.message_handler(commands=["start"])
 @increment_interaction_count
