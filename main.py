@@ -363,11 +363,21 @@ def group_membership_required(func):
 # === LỆNH XỬ LÝ TIN NHẮN ===
 
 # Format timestamp
+from datetime import datetime, timezone # Thêm import timezone
+
+# Format timestamp
 def format_timestamp(ts):
     try:
-        return datetime.utcfromtimestamp(int(float(ts))).strftime("%d-%m-%Y %H:%M:%S")
-    except:
+        # Chuyển đổi ts sang float trước để xử lý các chuỗi số nguyên hoặc thập phân
+        # Sau đó chuyển sang int để đảm bảo nó là giây (timestamp thường là giây kể từ Epoch)
+        timestamp_float = float(ts)
+        
+        # Phương pháp mới được khuyến nghị
+        return datetime.fromtimestamp(int(timestamp_float), tz=timezone.utc).strftime("%d-%m-%Y %H:%M:%S")
+    except (ValueError, TypeError): # Bắt thêm ValueError và TypeError cho ts không hợp lệ
         return "N/A"
+
+
 
 # Retry wrapper
 def fetch_with_retry(url, retries=3, timeout=30):
@@ -536,7 +546,7 @@ def handle_in4ff_command(message):
     # Trực tiếp gửi ảnh bằng outfit_url
     try:
         # Sử dụng HEAD request để kiểm tra header mà không tải toàn bộ ảnh
-        head_response = requests.head(outfit_url, timeout=10)
+        head_response = requests.head(outfit_url, timeout=60)
 
         # Ghi log chi tiết về phản hồi HEAD
         logging.info(f"HEAD response for outfit_url: {outfit_url}")
