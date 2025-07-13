@@ -363,11 +363,27 @@ def group_membership_required(func):
 # === LỆNH XỬ LÝ TIN NHẮN ===
 
 # Format timestamp
-def format_timestamp(ts):
-    try:
-        return datetime.utcfromtimestamp(int(float(ts))).strftime("%d-%m-%Y %H:%M:%S")
-    except:
+import datetime
+
+def format_timestamp(timestamp):
+    if timestamp == 0: # Xử lý trường hợp timestamp là 0 (ví dụ: ngày tạo/login cuối cùng N/A)
         return "N/A"
+    try:
+        # Cách khuyến nghị: Tạo datetime object có múi giờ (UTC)
+        # Chuyển đổi timestamp sang giây nếu nó là mili giây (phổ biến trong API)
+        if timestamp > 10**10: # Ước tính nếu timestamp là mili giây
+            timestamp_seconds = timestamp / 1000
+        else:
+            timestamp_seconds = timestamp
+
+        # Sử dụng datetime.fromtimestamp với tzinfo
+        dt_object = datetime.datetime.fromtimestamp(timestamp_seconds, tz=datetime.timezone.utc)
+        # Chuyển đổi sang múi giờ địa phương nếu muốn hiển thị cho người dùng
+        # Ví dụ: dt_object = dt_object.astimezone(datetime.timezone.utc) # nếu bạn muốn hiển thị giờ Việt Nam
+        # Thường thì hiển thị UTC hoặc không quan tâm múi giờ nếu chỉ là định dạng chuỗi
+        return dt_object.strftime("%d-%m-%Y %H:%M:%S")
+    except (ValueError, TypeError):
+        return "Không hợp lệ"
 
 # Retry wrapper
 def fetch_with_retry(url, retries=3, timeout=30):
