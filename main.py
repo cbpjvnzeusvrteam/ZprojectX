@@ -54,6 +54,7 @@ bot.feedback_messages = {}
 bot.code_snippets = {}
 bot.voice_map = {}
 bot.mail_messages_state = {}
+bot.noti_states = {} # THÊM DÒNG NÀY ĐỂ KHỞI TẠO
 interaction_count = 0
 
 # Khởi tạo Locks cho các biến dùng chung
@@ -621,22 +622,15 @@ def send_final_notification(admin_id):
 
     for uid in all_users:
         try:
-            if photo_file_id:
-                bot.send_photo(
-                    chat_id=uid,
-                    photo=photo_file_id,
-                    caption=notify_caption,
-                    parse_mode="HTML",
-                    reply_markup=markup
-                )
-            else:
-                bot.send_message(
-                    chat_id=uid,
-                    text=notify_caption,
-                    parse_mode="HTML",
-                    disable_web_page_preview=True,
-                    reply_markup=markup
-                )
+            send_message_robustly(
+                chat_id=uid,
+                photo=photo_file_id,
+                caption=notify_caption if photo_file_id else None,
+                text=notify_caption if not photo_file_id else None,
+                parse_mode="HTML",
+                disable_web_page_preview=True if not photo_file_id else None,
+                reply_markup=markup
+            )
             ok_users_count += 1
             time.sleep(0.1)
         except Exception as e:
@@ -650,22 +644,15 @@ def send_final_notification(admin_id):
         group_username = group.get("username", "")
         
         try:
-            if photo_file_id:
-                bot.send_photo(
-                    chat_id=group_id,
-                    photo=photo_file_id,
-                    caption=notify_caption,
-                    parse_mode="HTML",
-                    reply_markup=markup
-                )
-            else:
-                bot.send_message(
-                    chat_id=group_id,
-                    text=notify_caption,
-                    parse_mode="HTML",
-                    disable_web_page_preview=True,
-                    reply_markup=markup
-                )
+            send_message_robustly(
+                chat_id=group_id,
+                photo=photo_file_id,
+                caption=notify_caption if photo_file_id else None,
+                text=notify_caption if not photo_file_id else None,
+                parse_mode="HTML",
+                disable_web_page_preview=True if not photo_file_id else None,
+                reply_markup=markup
+            )
             ok_groups_count += 1
             time.sleep(0.1)
         except Exception as e:
@@ -1814,3 +1801,4 @@ if __name__ == "__main__":
         app.run(host="0.0.0.0", port=port)
     except Exception as e:
         logging.critical(f"Lỗi nghiêm trọng khi khởi động bot: {e}")
+
