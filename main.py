@@ -474,11 +474,11 @@ def handle_in4ff_command(message):
 📈 <b>Cấp độ:</b> <code>{get_safe_value(basic, "level")}</code>
 🌍 <b>Khu vực:</b> <code>{get_safe_value(basic, "region")}</code>
 ❤️ <b>Lượt thích:</b> <code>{get_safe_value(basic, "liked")}</code>
-⚔️ <b>Điểm danh dự:</b> <code>{get_safe_value(basic, "rankingPoints")}</code>
+⚔️ <b>Điểm Uy Tín:</b> <code>{get_safe_value(basic, "rankingPoints")}</code>
 ⭐ <b>Người nổi tiếng:</b> <code>{get_safe_value(basic, "showRank")}</code>
 🎖 <b>Huy hiệu Evo:</b> <code>{get_safe_value(basic, "badgeId")}</code>
-🎗 <b>Chức danh:</b> <code>{get_safe_value(basic, "title")}</code>
-✍️ <b>Chữ ký:</b> <i>{get_safe_value(social, "signature")}</i>
+🎗 <b>Chức Vụ:</b> <code>{get_safe_value(basic, "title")}</code>
+✍️ <b>Tiểu Sử:</b> <i>{get_safe_value(social, "signature")}</i>
 
 <b>━━━━━━━━━━━━━━━━━━━━</b>
 <b>🎮 HOẠT ĐỘNG TÀI KHOẢN</b>
@@ -512,29 +512,29 @@ def handle_in4ff_command(message):
 📊 <b>Cấp độ:</b> <code>{get_safe_value(pet, "level")}</code>
 
 <b>━━━━━━━━━━━━━━━━━━━━</b>
-<b>🛡️ THÔNG TIN QD</b>
+<b>🛡️ THÔNG TIN QUÂN ĐOÀN</b>
 <b>━━━━━━━━━━━━━━━━━━━━</b>
-🏰 <b>Tên QD:</b> <code>{get_safe_value(clan, "clanName")}</code>
-🆔 <b>ID QD:</b> <code>{get_safe_value(clan, "clanId")}</code>
+🏰 <b>Tên QUÂN ĐOÀN:</b> <code>{get_safe_value(clan, "clanName")}</code>
+🆔 <b>ID QUÂN ĐOÀN:</b> <code>{get_safe_value(clan, "clanId")}</code>
 ⚙️ <b>Cấp độ:</b> <code>{get_safe_value(clan, "clanLevel")}</code>
 👥 <b>Thành viên:</b> <code>{get_safe_value(clan, "memberNum")}</code>
 
 <b>━━━━━━━━━━━━━━━━━━━━</b>
-<b>👑 THÔNG TIN CHỦ QD</b>
+<b>👑 THÔNG TIN CHỦ QUÂN ĐOÀN</b>
 <b>━━━━━━━━━━━━━━━━━━━━</b>
 🧍 <b>Tên:</b> <code>{get_safe_value(captain, "nickname")}</code>
 🆔 <b>UID:</b> <code>{get_safe_value(captain, "accountId")}</code>
 📈 <b>Cấp độ:</b> <code>{get_safe_value(captain, "level")}</code>
 📅 <b>Ngày tạo:</b> <code>{format_timestamp(captain.get("createAt", 0))}</code>
 ⏱ <b>Lần đăng nhập cuối:</b> <code>{format_timestamp(captain.get("lastLoginAt", 0))}</code>
-🎗 <b>Chức danh:</b> <code>{get_safe_value(captain, "title")}</code>
+🎗 <b>Chức Vụ:</b> <code>{get_safe_value(captain, "title")}</code>
 🎯 <b>Huy hiệu BP:</b> <code>{get_safe_value(captain, "badgeCnt")}</code>
 🏆 <b>Điểm BR:</b> <code>{get_safe_value(captain, "rankingPoints")}</code>
 ⚡ <b>Điểm CS:</b> <code>{get_safe_value(captain, "csRankingPoints")}</code>
 
 ━━━━━━━━━━━━━━━━━━━━
-<i>👑 Chủ sở hữu:</i> @zproject2  
-⚡ <i>NHÓM:</i> <a href="https://t.me/zproject3">Tham gia ngay</a>
+<i>👑 ADMIN:</i> @zproject2  
+⚡ <i>GROUP:</i> <a href="https://t.me/zproject3">Tham gia ngay</a>
 ━━━━━━━━━━━━━━━━━━━━
 </blockquote>
 """
