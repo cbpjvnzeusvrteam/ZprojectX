@@ -365,7 +365,6 @@ import requests
 import time
 import logging
 from datetime import datetime
-from telebot.util import html_escape # Make sure telebot is imported and html_escape is available
 
 # Assuming send_message_robustly, increment_interaction_count, and group_membership_required
 # are defined elsewhere in your code.
