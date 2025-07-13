@@ -551,7 +551,6 @@ def send_like(message):
         </blockquote>
         """, parse_mode="HTML")
 
-
 @bot.message_handler(commands=["noti"])
 @increment_interaction_count
 @group_membership_required # Áp dụng decorator
