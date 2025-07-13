@@ -528,14 +528,20 @@ def handle_in4ff_command(message):
 ━━━━━━━━━━━━━━━━━━━━
 </blockquote>
 """
+    # ... (previous code)
+
     send_message_robustly(message.chat.id, msg, parse_mode="HTML", reply_to_message_id=message.message_id)
 
+    # Directly send the photo using the outfit_url
     try:
-        img_res = requests.get(outfit_url, timeout=30)
-        if img_res.headers.get("Content-Type", "").startswith("image/"):
+        # Before sending the photo, it's good practice to quickly check if the URL returns an image.
+        # This prevents Telegram from trying to download a non-image file.
+        # We'll use a HEAD request for efficiency.
+        head_response = requests.head(outfit_url, timeout=10)
+        if head_response.status_code == 200 and head_response.headers.get('Content-Type', '').startswith('image/'):
             send_message_robustly(
                 chat_id=message.chat.id,
-                photo=outfit_url,
+                photo=outfit_url,  # Directly use the URL here
                 caption=f"<blockquote>🖼️ <b>Hình ảnh trang phục của</b> <code>{get_safe_value(basic, 'nickname')}</code></blockquote>",
                 parse_mode="HTML",
                 reply_to_message_id=message.message_id
@@ -547,14 +553,15 @@ def handle_in4ff_command(message):
                 parse_mode="HTML",
                 reply_to_message_id=message.message_id
             )
-    except Exception as e:
-        logging.error(f"Failed to fetch/send outfit image for UID {uid}: {e}")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to check or send outfit image for UID {uid}: {e}")
         send_message_robustly(
             message.chat.id,
             text="<blockquote>⚠️ <b>Không thể tìm nạp hoặc gửi hình ảnh trang phục.</b></blockquote>",
             parse_mode="HTML",
             reply_to_message_id=message.message_id
         )
+
 
 @bot.message_handler(commands=["start"])
 @increment_interaction_count
