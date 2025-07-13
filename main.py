@@ -1,3 +1,4 @@
+
 import os
 import time
 import logging
@@ -375,9 +376,13 @@ def fetch_with_retry(url, retries=3, timeout=30):
             response = requests.get(url, timeout=timeout)
             if response.status_code == 200:
                 return response.json()
-        except Exception as e:
-            print(f"Attempt {attempt+1} failed for URL: {url}\nError: {e}")
-            time.sleep(1)
+            else:
+                logging.warning(f"Attempt {attempt+1} received non-200 status code {response.status_code} for URL: {url}")
+        except requests.exceptions.Timeout:
+            logging.warning(f"Attempt {attempt+1} timed out for URL: {url}")
+        except requests.exceptions.RequestException as e:
+            logging.warning(f"Attempt {attempt+1} failed for URL: {url}\nError: {e}")
+        time.sleep(1)
     return None
 
 # Lệnh /in4ff
@@ -391,32 +396,48 @@ def handle_in4ff_command(message):
     # parts[2] sẽ là uid
 
     if len(parts) != 3:
-        bot.reply_to(
-            message,
-            "❌ *Định dạng không hợp lệ! Sử dụng: /in4ff {region} {uid}*\nVí dụ: `/in4ff vn 2211865132`",
-            parse_mode="Markdown"
+        send_message_robustly(
+            message.chat.id,
+            text="<blockquote>❌ <b>Định dạng không hợp lệ!</b> Sử dụng: <code>/in4ff {region} {uid}</code>\nVí dụ: <code>/in4ff vn 2211865132</code></blockquote>",
+            parse_mode="HTML",
+            reply_to_message_id=message.message_id
         )
         return
 
-    region = parts[1]
-    uid = parts[2]
+    region = html_escape(parts[1]) # Escape để tránh lỗi HTML injection
+    uid = html_escape(parts[2]) # Escape để tránh lỗi HTML injection
 
-    bot.reply_to(
-        message,
-        f"⏳ *Đang tìm thông tin tài khoản cho UID `{uid}`...*",
-        parse_mode="Markdown"
+    send_message_robustly(
+        message.chat.id,
+        text=f"<blockquote>⏳ <i>Đang tìm thông tin tài khoản cho UID</i> <code>{uid}</code>...</blockquote>",
+        parse_mode="HTML",
+        reply_to_message_id=message.message_id
     )
 
     info_url = f"https://info-ffayaacte.vercel.app/player-info?uid={uid}&region={region}"
     outfit_url = f"https://xp-outfit-v1.vercel.app/outfit-image?uid={uid}&region={region}&key=XPxFF"
 
     info_res = fetch_with_retry(info_url, retries=3, timeout=30)
+    
     if not info_res:
-        bot.reply_to(
-            message,
-            "❌ *Không thể tìm nạp dữ liệu sau 3 lần thử lại. Vui lòng thử lại sau.*",
-            parse_mode="Markdown"
+        send_message_robustly(
+            message.chat.id,
+            text="<blockquote>❌ <b>Không thể tìm nạp dữ liệu từ API sau 3 lần thử lại.</b> Vui lòng thử lại sau hoặc kiểm tra lại UID/Region.</blockquote>",
+            parse_mode="HTML",
+            reply_to_message_id=message.message_id
         )
+        return
+    
+    if not isinstance(info_res, dict) or "basicInfo" not in info_res:
+        error_msg = info_res.get("message", "Cấu trúc dữ liệu API trả về không hợp lệ hoặc thiếu thông tin cơ bản.") if isinstance(info_res, dict) else "Phản hồi từ API không phải là JSON hợp lệ."
+        send_message_robustly(
+            message.chat.id,
+            text=f"<blockquote>❌ <b>Lỗi dữ liệu từ API:</b> <i>{html_escape(error_msg)}</i>\n"
+                 f"Vui lòng kiểm tra lại UID hoặc liên hệ hỗ trợ nếu lỗi này tiếp tục xảy ra.</blockquote>",
+            parse_mode="HTML",
+            reply_to_message_id=message.message_id
+        )
+        logging.error(f"API returned invalid data for UID {uid}, Region {region}: {info_res}")
         return
 
     basic = info_res.get("basicInfo", {})
@@ -426,100 +447,113 @@ def handle_in4ff_command(message):
     pet = info_res.get("petInfo", {})
     social = info_res.get("socialInfo", {})
 
-    msg = f"""*━━━━━━━━━━━━━━━━━━━━*
-*👑 THÔNG TIN TÀI KHOẢN CƠ BẢN*
-*━━━━━━━━━━━━━━━━━━━━*
-👤 *Tên:* {basic.get("nickname", "N/A")}
-🆔 *UID:* {basic.get("accountId", "N/A")}
-📈 *Cấp độ:* {basic.get("level", "N/A")}
-🌍 *Khu vực:* {basic.get("region", "N/A")}
-❤️ *Lượt thích:* {basic.get("liked", "N/A")}
-⚔️ *Điểm danh dự:* {basic.get("rankingPoints", "N/A")}
-⭐ *Người nổi tiếng:* {basic.get("showRank", "N/A")}
-🎖 *Huy hiệu Evo:* {basic.get("badgeId", "N/A")}
-🎗 *Chức danh:* {basic.get("title", "N/A")}
-✍️ *Chữ ký:* {social.get("signature", "N/A")}
+    # Hàm trợ giúp để lấy giá trị an toàn và escape HTML
+    def get_safe_value(data_dict, key, default="N/A"):
+        value = data_dict.get(key, default)
+        # Nếu là list (ví dụ: skills, weapon skins), join chúng lại
+        if isinstance(value, list):
+            return ", ".join(map(str, value)) if value else default
+        return html_escape(str(value))
 
-*━━━━━━━━━━━━━━━━━━━━*
-*🎮 HOẠT ĐỘNG TÀI KHOẢN*
-*━━━━━━━━━━━━━━━━━━━━*
-📦 *Phiên bản OB:* {basic.get("releaseVersion", "N/A")}
-🔥 *Fire Pass:* {basic.get("seasonId", "N/A")}
-🎯 *Huy hiệu BP:* {basic.get("badgeCnt", "N/A")}
-🏆 *Xếp hạng BR:* {basic.get("rank", "N/A")}
-⚡ *Điểm CS:* {basic.get("csRankingPoints", "N/A")}
-📅 *Ngày tạo:* {format_timestamp(basic.get("createAt", 0))}
-⏱ *Lần đăng nhập cuối:* {format_timestamp(basic.get("lastLoginAt", 0))}
+    msg = f"""
+<blockquote><b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>👑 THÔNG TIN TÀI KHOẢN CƠ BẢN</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+👤 <b>Tên:</b> <code>{get_safe_value(basic, "nickname")}</code>
+🆔 <b>UID:</b> <code>{get_safe_value(basic, "accountId")}</code>
+📈 <b>Cấp độ:</b> <code>{get_safe_value(basic, "level")}</code>
+🌍 <b>Khu vực:</b> <code>{get_safe_value(basic, "region")}</code>
+❤️ <b>Lượt thích:</b> <code>{get_safe_value(basic, "liked")}</code>
+⚔️ <b>Điểm danh dự:</b> <code>{get_safe_value(basic, "rankingPoints")}</code>
+⭐ <b>Người nổi tiếng:</b> <code>{get_safe_value(basic, "showRank")}</code>
+🎖 <b>Huy hiệu Evo:</b> <code>{get_safe_value(basic, "badgeId")}</code>
+🎗 <b>Chức danh:</b> <code>{get_safe_value(basic, "title")}</code>
+✍️ <b>Chữ ký:</b> <i>{get_safe_value(social, "signature")}</i>
 
-*━━━━━━━━━━━━━━━━━━━━*
-*🧍 TỔNG QUAN TÀI KHOẢN*
-*━━━━━━━━━━━━━━━━━━━━*
-🖼 *ID ảnh đại diện:* {profile.get("avatarId", "N/A")}
-🎌 *ID biểu ngữ:* {basic.get("bannerId", "N/A")}
-📍 *ID ghim:* {basic.get("headPic", "N/A")}
-🎯 *Kỹ năng:* {profile.get("equipedSkills", [])}
-🔫 *ID skin súng:* {basic.get("weaponSkinShows", [])}
-🎬 *ID hoạt ảnh:* {profile.get("isSelected", "N/A")}
-✨ *Hoạt ảnh biến đổi:* {profile.get("isSelectedAwaken", "N/A")}
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>🎮 HOẠT ĐỘNG TÀI KHOẢN</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+📦 <b>Phiên bản OB:</b> <code>{get_safe_value(basic, "releaseVersion")}</code>
+🔥 <b>Fire Pass:</b> <code>{get_safe_value(basic, "seasonId")}</code>
+🎯 <b>Huy hiệu BP:</b> <code>{get_safe_value(basic, "badgeCnt")}</code>
+🏆 <b>Xếp hạng BR:</b> <code>{get_safe_value(basic, "rank")}</code>
+⚡ <b>Điểm CS:</b> <code>{get_safe_value(basic, "csRankingPoints")}</code>
+📅 <b>Ngày tạo:</b> <code>{format_timestamp(basic.get("createAt", 0))}</code>
+⏱ <b>Lần đăng nhập cuối:</b> <code>{format_timestamp(basic.get("lastLoginAt", 0))}</code>
 
-*━━━━━━━━━━━━━━━━━━━━*
-*🐾 THÔNG TIN THÚ CƯNG*
-*━━━━━━━━━━━━━━━━━━━━*
-🐶 *Đang trang bị?:* {pet.get("isSelected", "N/A")}
-📛 *Pet ID:* {pet.get("id", "N/A")}
-🦴 *Skin ID:* {pet.get("skinId", "N/A")}
-🔋 *Kinh nghiệm:* {pet.get("exp", "N/A")}
-📊 *Cấp độ:* {pet.get("level", "N/A")}
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>🧍 TỔNG QUAN TÀI KHOẢN</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+🖼 <b>ID ảnh đại diện:</b> <code>{get_safe_value(profile, "avatarId")}</code>
+🎌 <b>ID biểu ngữ:</b> <code>{get_safe_value(basic, "bannerId")}</code>
+📍 <b>ID ghim:</b> <code>{get_safe_value(basic, "headPic")}</code>
+🎯 <b>Kỹ năng:</b> <code>{get_safe_value(profile, "equipedSkills")}</code>
+🔫 <b>ID skin súng:</b> <code>{get_safe_value(basic, "weaponSkinShows")}</code>
+🎬 <b>ID hoạt ảnh:</b> <code>{get_safe_value(profile, "isSelected")}</code>
+✨ <b>Hoạt ảnh biến đổi:</b> <code>{get_safe_value(profile, "isSelectedAwaken")}</code>
 
-*━━━━━━━━━━━━━━━━━━━━*
-*🛡️ THÔNG TIN QD*
-*━━━━━━━━━━━━━━━━━━━━*
-🏰 *Tên QD:* {clan.get("clanName", "N/A")}
-🆔 *ID QD:* {clan.get("clanId", "N/A")}
-⚙️ *Cấp độ:* {clan.get("clanLevel", "N/A")}
-👥 *Thành viên:* {clan.get("memberNum", "N/A")}
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>🐾 THÔNG TIN THÚ CƯNG</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+🐶 <b>Đang trang bị?:</b> <code>{get_safe_value(pet, "isSelected")}</code>
+📛 <b>Pet ID:</b> <code>{get_safe_value(pet, "id")}</code>
+🦴 <b>Skin ID:</b> <code>{get_safe_value(pet, "skinId")}</code>
+🔋 <b>Kinh nghiệm:</b> <code>{get_safe_value(pet, "exp")}</code>
+📊 <b>Cấp độ:</b> <code>{get_safe_value(pet, "level")}</code>
 
-*━━━━━━━━━━━━━━━━━━━━*
-*👑 THÔNG TIN CHỦ QD*
-*━━━━━━━━━━━━━━━━━━━━*
-🧍 *Tên:* {captain.get("nickname", "N/A")}
-🆔 *UID:* {captain.get("accountId", "N/A")}
-📈 *Cấp độ:* {captain.get("level", "N/A")}
-📅 *Ngày tạo:* {format_timestamp(captain.get("createAt", 0))}
-⏱ *Lần đăng nhập cuối:* {format_timestamp(captain.get("lastLoginAt", 0))}
-🎗 *Chức danh:* {captain.get("title", "N/A")}
-🎯 *Huy hiệu BP:* {captain.get("badgeCnt", "N/A")}
-🏆 *Điểm BR:* {captain.get("rankingPoints", "N/A")}
-⚡ *Điểm CS:* {captain.get("csRankingPoints", "N/A")}
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>🛡️ THÔNG TIN QD</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+🏰 <b>Tên QD:</b> <code>{get_safe_value(clan, "clanName")}</code>
+🆔 <b>ID QD:</b> <code>{get_safe_value(clan, "clanId")}</code>
+⚙️ <b>Cấp độ:</b> <code>{get_safe_value(clan, "clanLevel")}</code>
+👥 <b>Thành viên:</b> <code>{get_safe_value(clan, "memberNum")}</code>
+
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>👑 THÔNG TIN CHỦ QD</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+🧍 <b>Tên:</b> <code>{get_safe_value(captain, "nickname")}</code>
+🆔 <b>UID:</b> <code>{get_safe_value(captain, "accountId")}</code>
+📈 <b>Cấp độ:</b> <code>{get_safe_value(captain, "level")}</code>
+📅 <b>Ngày tạo:</b> <code>{format_timestamp(captain.get("createAt", 0))}</code>
+⏱ <b>Lần đăng nhập cuối:</b> <code>{format_timestamp(captain.get("lastLoginAt", 0))}</code>
+🎗 <b>Chức danh:</b> <code>{get_safe_value(captain, "title")}</code>
+🎯 <b>Huy hiệu BP:</b> <code>{get_safe_value(captain, "badgeCnt")}</code>
+🏆 <b>Điểm BR:</b> <code>{get_safe_value(captain, "rankingPoints")}</code>
+⚡ <b>Điểm CS:</b> <code>{get_safe_value(captain, "csRankingPoints")}</code>
 
 ━━━━━━━━━━━━━━━━━━━━
-👑 *Chủ sở hữu:* @xp_owner99  
-⚡ *NHÓM FF LIKE:* [Tham gia ngay](https://t.me/like_group909)
+<i>👑 Chủ sở hữu:</i> @zproject2  
+⚡ <i>NHÓM:</i> <a href="https://t.me/zproject3">Tham gia ngay</a>
 ━━━━━━━━━━━━━━━━━━━━
+</blockquote>
 """
-    bot.reply_to(message, msg, parse_mode="Markdown")
+    send_message_robustly(message.chat.id, msg, parse_mode="HTML", reply_to_message_id=message.message_id)
 
     try:
         img_res = requests.get(outfit_url, timeout=30)
         if img_res.headers.get("Content-Type", "").startswith("image/"):
-            bot.send_photo(
+            send_message_robustly(
                 chat_id=message.chat.id,
                 photo=outfit_url,
-                caption=f"*🖼️ Hình ảnh trang phục của {basic.get('nickname', 'N/A')}*",
-                parse_mode="Markdown"
+                caption=f"<blockquote>🖼️ <b>Hình ảnh trang phục của</b> <code>{get_safe_value(basic, 'nickname')}</code></blockquote>",
+                parse_mode="HTML",
+                reply_to_message_id=message.message_id
             )
         else:
-            bot.reply_to(
-                message,
-                "⚠️ *Hình ảnh trang phục không có sẵn hoặc định dạng không hợp lệ.*",
-                parse_mode="Markdown"
+            send_message_robustly(
+                message.chat.id,
+                text="<blockquote>⚠️ <b>Hình ảnh trang phục không có sẵn hoặc định dạng không hợp lệ.</b></blockquote>",
+                parse_mode="HTML",
+                reply_to_message_id=message.message_id
             )
     except Exception as e:
-        print("Failed to fetch/send outfit image:", e)
-        bot.reply_to(
-            message,
-            "⚠️ *Không thể tìm nạp hoặc gửi hình ảnh trang phục.*",
-            parse_mode="Markdown"
+        logging.error(f"Failed to fetch/send outfit image for UID {uid}: {e}")
+        send_message_robustly(
+            message.chat.id,
+            text="<blockquote>⚠️ <b>Không thể tìm nạp hoặc gửi hình ảnh trang phục.</b></blockquote>",
+            parse_mode="HTML",
+            reply_to_message_id=message.message_id
         )
 
 @bot.message_handler(commands=["start"])
@@ -561,7 +595,7 @@ def help_command(message):
         "•  <code>/ask &lt;câu hỏi&gt;</code> - Hỏi AI Được Tích Hợp WormGpt V2.\n"
         "•  <code>/ngl &lt;username&gt; &lt;tin_nhắn&gt; &lt;số_lần&gt;</code> - Spam Ngl.\n"
         "•  <code>/like &lt;UID FF&gt;</code> - Buff Like Free Fire.\n"
-        "•  <code>/in4ff &lt;UID FF&gt;</code> - Check info Account FF\n"
+        "•  <code>/in4ff &lt;VN UID FF&gt;</code> - Check info Account FF\n"
         "•  <code>/tuongtac</code> - Xem tổng số lượt tương tác của bot.\n"
         "•  <code>/phanhoi</code> - Gửi Phản Hồi Lỗi Hoặc Chức Năng Cần Cải Tiến.\n"
         "•  <code>/ping</code> - Xem Ping Sever Bot.\n"
