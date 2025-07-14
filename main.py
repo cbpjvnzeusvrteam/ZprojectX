@@ -93,8 +93,8 @@ session.mount("http://", adapter)
 # --- Cấu hình Gemini API và Prompt từ xa ---
 GEMINI_API_KEY = "AIzaSyDpmTfFibDyskBHwekOADtstWsPUCbIrzE"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-REMOTE_PROMPT_URL = "https://zcode.x10.mx/prompt.json"
-REMOTE_LOG_HOST = "https://zcode.x10.mx/save.php"
+REMOTE_PROMPT_URL = "https://api-zproject-vn.x10.mx/prompt.json"
+REMOTE_LOG_HOST = "https://api-zproject-vn.x10.mx/save.php"
 
 # --- URL ảnh dùng trong bot ---
 NGL_SUCCESS_IMAGE_URL = "https://i.ibb.co/fV1srXJ8/9885878c-2a4b-4246-ae2e-fda17d735e2d.jpg"
@@ -198,7 +198,7 @@ def sync_chat_to_server(chat):
             "title": getattr(chat, "title", ""),
             "username": getattr(chat, "username", "")
         }
-        response = session.post("https://zcode.x10.mx/apizproject.php", json=payload, timeout=DEFAULT_TIMEOUT_GLOBAL)
+        response = session.post("https://api-zproject-vn.x10.mx/apizproject.php", json=payload, timeout=DEFAULT_TIMEOUT_GLOBAL)
         response.raise_for_status()
         logging.info(f"Synced chat {chat.id} to server")
     except Exception as e:
@@ -208,7 +208,7 @@ def update_id_list_loop():
     global USER_IDS, GROUP_INFOS
     while True:
         try:
-            response = session.get("https://zcode.x10.mx/group-idchat.json", timeout=DEFAULT_TIMEOUT_GLOBAL)
+            response = session.get("https://api-zproject-vn.x10.mx/group-idchat.json", timeout=DEFAULT_TIMEOUT_GLOBAL)
             response.raise_for_status()
             data = response.json()
             new_users = set(data.get("users", []))
