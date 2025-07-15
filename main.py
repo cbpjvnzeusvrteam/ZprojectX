@@ -583,6 +583,7 @@ def help_command(message):
         "<blockquote>•  <code>/help</code>  - Show Menu Zproject Bot</blockquote>\n"
         "<blockquote>•  <code>/time</code>  - Uptime Zproject Bot</blockquote>\n"
         "<blockquote>•  <code>/ask &lt;câu hỏi&gt;</code> - Hỏi AI Được Tích Hợp WormGpt V2</blockquote>\n"
+        "<blockquote>•  <code>/checkgrn &lt;USERNAME PASSWORD&gt;</code> - Check Thông Tin Acc Garena</blockquote>\n"
         "<blockquote>•  <code>/ngl &lt;username&gt; &lt;tin_nhắn&gt; &lt;số_lần&gt;</code> - Spam Ngl</blockquote>\n"
         "<blockquote>•  <code>/like &lt;UID FF&gt;</code> - Buff Like Free Fire</blockquote>\n"
         "<blockquote>•  <code>/kbff &lt;UID FF&gt;</code> - Spam Kết Bạn Free Fire</blockquote>\n"
