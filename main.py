@@ -35,7 +35,7 @@ logging.basicConfig(
 # --- Cấu hình chung ---
 TOKEN = os.environ.get("BOT_TOKEN", "7539540916:AAENFBF2B2dyXLITmEC2ccgLYim2t9vxOQk")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 5819094246))
-GR_SCAM = int(os.environ.get("GR_SCAM", 5819094246))
+GR_SCAM = int(os.environ.get("GR_SCAM", -1002788937500))
 APP_URL = os.environ.get("APP_URL", "https://zproject-111.onrender.com")
 
 # THAY ĐỔI MỚI: ID của nhóm bắt buộc
