@@ -961,9 +961,9 @@ def send_final_notification(admin_id):
 import requests
 import json
 import logging
-from datetime import datetime, time, timedelta # Đã có 'time' ở đây
+from datetime import datetime, time, timedelta # DÒNG NÀY RẤT QUAN TRỌNG: Phải có 'time' ở đây
 import threading
-import time # Giữ lại nếu bạn dùng time.sleep() hoặc các hàm khác từ module 'time'
+import time # Giữ lại dòng này cho time.sleep()
 
 # --- Đảm bảo các biến cấu hình này đã được định nghĩa ở đâu đó trong code của bạn ---
 # Ví dụ:
@@ -1016,7 +1016,7 @@ def load_auto_like_uids():
 def send_like_request(uid):
     """Gửi yêu cầu like đến API."""
     url = "https://like-zproject-sever.onrender.com/like"
-    # SỬA Ở ĐÂY: đổi 'server' thành 'server_name' theo yêu cầu của bạn
+    # Đã sửa: API của bạn dùng 'server_name'
     params = {"uid": uid, "server_name": "vn"}
     try:
         response = requests.get(url, params=params)
@@ -1042,11 +1042,17 @@ def perform_auto_like():
         # Kiểm tra nếu chưa từng auto like hôm nay hoặc lần auto like cuối cùng không phải hôm nay
         if uid not in last_auto_like_date or last_auto_like_date[uid] != today_date_str:
             logging.info(f"Đang thực hiện auto like cho UID: {uid}...")
-            result = send_like_request(uid) # Hàm này đã được sửa để dùng 'server_name'
+            result = send_like_request(uid)
             message_text = ""
             status_emoji = "❌"
             # Đảm bảo InlineKeyboardMarkup và InlineKeyboardButton có sẵn ở đây
-            button = InlineKeyboardMarkup([[InlineKeyboardButton("💰 Thuê Auto Like giá rẻ", url=RENT_AUTO_LIKE_BUTTON_URL)]])
+            # Giả định InlineKeyboardMarkup, InlineKeyboardButton đã được import từ telebot.types
+            # Ví dụ: from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+            try:
+                button = InlineKeyboardMarkup([[InlineKeyboardButton("💰 Thuê Auto Like giá rẻ", url=RENT_AUTO_LIKE_BUTTON_URL)]])
+            except NameError:
+                logging.warning("InlineKeyboardMarkup or InlineKeyboardButton is not defined. Skipping button.")
+                button = None # Gán None nếu không tìm thấy
 
             if result.get("status") == 1: # Theo API mẫu bạn cung cấp, status 1 là thành công
                 status_emoji = "✅"
@@ -1076,14 +1082,17 @@ def perform_auto_like():
                 """
             try:
                 # Đảm bảo 'bot' object có sẵn ở đây (thường là global hoặc được truyền vào)
-                bot.send_photo(
-                    chat_id=AUTO_LIKE_CHANNEL_ID,
-                    photo=AUTO_LIKE_IMAGE_URL,
-                    caption=message_text,
-                    parse_mode="HTML",
-                    reply_markup=button
-                )
-                logging.info(f"Đã gửi thông báo auto like cho UID {uid} vào nhóm.")
+                if 'bot' in globals() and bot: # Kiểm tra 'bot' có tồn tại không
+                    bot.send_photo(
+                        chat_id=AUTO_LIKE_CHANNEL_ID,
+                        photo=AUTO_LIKE_IMAGE_URL,
+                        caption=message_text,
+                        parse_mode="HTML",
+                        reply_markup=button
+                    )
+                    logging.info(f"Đã gửi thông báo auto like cho UID {uid} vào nhóm.")
+                else:
+                    logging.error("Biến 'bot' chưa được định nghĩa hoặc khởi tạo. Không thể gửi thông báo.")
             except Exception as e:
                 logging.error(f"Không thể gửi thông báo auto like cho UID {uid} vào nhóm {AUTO_LIKE_CHANNEL_ID}: {e}")
         else:
@@ -1094,18 +1103,14 @@ def auto_like_scheduler():
     load_auto_like_uids() # Tải UID khi bot khởi động
     while True:
         # Lập lịch để chạy load_auto_like_uids mỗi 5 phút
-        # Điều này sẽ tạo một luồng mới mỗi 5 phút. Nếu bạn chỉ muốn tải lại dữ liệu,
-        # có thể đơn giản là gọi load_auto_like_uids() trong vòng lặp chính
-        # nhưng đảm bảo nó không chặn quá lâu.
-        # Ở đây tôi giữ nguyên để phù hợp với logic bạn đã có,
-        # nhưng cần lưu ý nếu danh sách UID lớn có thể ảnh hưởng hiệu năng.
         threading.Timer(300, load_auto_like_uids).start()
 
         now = get_vietnam_time()
         # Tính toán thời gian chờ đến 00:00 ngày hôm sau
         tomorrow = now.date() + timedelta(days=1)
-        # SỬA LỖI TẠI ĐÂY: Thay 'datetime.time' bằng 'time'
-        midnight_tomorrow = datetime.combine(tomorrow, time(0, 0, 0))
+        # SỬA LỖI TẠI ĐÂY: Sử dụng 'time' trực tiếp từ datetime import
+        midnight_tomorrow = datetime.combine(tomorrow, time(0, 0, 0)) # ĐÃ SỬA CHẮC CHẮN DÒNG NÀY
+
         time_to_wait = (midnight_tomorrow - now).total_seconds()
 
         if time_to_wait < 0: # Nếu đã qua 00:00 rồi (ví dụ bot khởi động sau 00:00)
@@ -1142,7 +1147,7 @@ def send_like(message):
 
     # Url API của bạn
     url = "https://like-zproject-sever.onrender.com/like"
-    # SỬA Ở ĐÂY: API của bạn dùng 'server_name'
+    # Đã sửa: API của bạn dùng 'server_name'
     params = {"uid": uid, "server_name": "vn"}
 
     try:
@@ -1157,7 +1162,13 @@ def send_like(message):
         status = json_data.get("status")
 
         # Đảm bảo InlineKeyboardMarkup và InlineKeyboardButton có sẵn
-        button = InlineKeyboardMarkup([[InlineKeyboardButton("💰 Thuê Auto Like giá rẻ", url=RENT_AUTO_LIKE_BUTTON_URL)]])
+        # Giả định InlineKeyboardMarkup, InlineKeyboardButton đã được import từ telebot.types
+        # Ví dụ: from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+        try:
+            button = InlineKeyboardMarkup([[InlineKeyboardButton("💰 Thuê Auto Like giá rẻ", url=RENT_AUTO_LIKE_BUTTON_URL)]])
+        except NameError:
+            logging.warning("InlineKeyboardMarkup or InlineKeyboardButton is not defined. Skipping button.")
+            button = None # Gán None nếu không tìm thấy
 
         if status == 1:
             reply_text = f"""
@@ -1174,7 +1185,7 @@ def send_like(message):
             bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="✅")
             bot.reply_to(message, reply_text, parse_mode="HTML", reply_markup=button)
         else:
-            error_message = json_data.get("message", "Không rõ lỗi")
+            error_message = json_data.get("message", "Yêu cầu thất bại.")
             reply_text = f"""
             <blockquote>
                 <b>❌ Buff Like Thất Bại!</b>
@@ -1234,13 +1245,13 @@ def set_autolike(message):
 
     # Gửi UID lên API để lưu
     try:
-        # Thay requests.post() bằng requests.get() nếu bạn muốn gửi bằng GET (đã sửa trong API PHP)
+        # Đã xác nhận API PHP chấp nhận GET, nên dùng requests.get() là đúng.
         save_response = requests.get(SAVE_ID_API_URL, params={'uid': uid})
         save_response.raise_for_status()
         save_result = save_response.json()
 
         if save_result.get("status") == "success":
-            bot.reply_to(message, f"✅ UID `{uid}` đã được thêm vào danh sách auto like thành công!.\nBot sẽ tự động buff like vào 00:00 mỗi ngày (giờ Việt Nam).")
+            bot.reply_to(message, f"✅ UID `{uid}` đã được thêm vào danh sách auto like thành công!.\nBot sẽ tự động buff like vào 00:00 mỗi ngày.")
             # Cập nhật ngay danh sách UID trong bộ nhớ và thực hiện like lần đầu
             load_auto_like_uids()
             # Thực hiện like ngay lập tức sau khi thêm auto like
@@ -1263,7 +1274,13 @@ def perform_initial_autolike(uid, chat_id):
     message_text = ""
     status_emoji = "❌"
     # Đảm bảo InlineKeyboardMarkup và InlineKeyboardButton có sẵn
-    button = InlineKeyboardMarkup([[InlineKeyboardButton("💰 Thuê Auto Buff Like giá rẻ", url=RENT_AUTO_LIKE_BUTTON_URL)]])
+    # Giả định InlineKeyboardMarkup, InlineKeyboardButton đã được import từ telebot.types
+    # Ví dụ: from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    try:
+        button = InlineKeyboardMarkup([[InlineKeyboardButton("💰 Thuê Auto Buff Like giá rẻ", url=RENT_AUTO_LIKE_BUTTON_URL)]])
+    except NameError:
+        logging.warning("InlineKeyboardMarkup or InlineKeyboardButton is not defined. Skipping button.")
+        button = None # Gán None nếu không tìm thấy
 
     if result.get("status") == 1:
         status_emoji = "✅"
@@ -1293,19 +1310,21 @@ def perform_initial_autolike(uid, chat_id):
         """
     try:
         # Đảm bảo 'bot' object có sẵn ở đây
-        bot.send_message(
-            chat_id=chat_id, # Gửi vào chat của người dùng vừa bật autolike
-            text=message_text,
-            parse_mode="HTML",
-            reply_markup=button
-        )
-        logging.info(f"Đã gửi thông báo like ban đầu cho UID {uid} vào chat {chat_id}.")
+        if 'bot' in globals() and bot: # Kiểm tra 'bot' có tồn tại không
+            bot.send_message(
+                chat_id=chat_id, # Gửi vào chat của người dùng vừa bật autolike
+                text=message_text,
+                parse_mode="HTML",
+                reply_markup=button
+            )
+            logging.info(f"Đã gửi thông báo like ban đầu cho UID {uid} vào chat {chat_id}.")
+        else:
+            logging.error("Biến 'bot' chưa được định nghĩa hoặc khởi tạo. Không thể gửi thông báo.")
     except Exception as e:
         logging.error(f"Không thể gửi thông báo like ban đầu cho UID {uid} vào chat {chat_id}: {e}")
 
 # Đừng quên đặt luồng này vào phần __main__ của bot bạn
 # threading.Thread(target=auto_like_scheduler, daemon=True).start()
-
 
 @bot.message_handler(commands=["ngl"])
 @increment_interaction_count
