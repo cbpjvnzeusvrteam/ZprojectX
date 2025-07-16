@@ -958,6 +958,13 @@ def send_final_notification(admin_id):
         reply_to_message_id=original_message_id
     )
 
+import requests
+import json
+import logging
+from datetime import datetime, time, timedelta # Chắc chắn có 'time' ở đây
+import threading
+import time # Giữ lại nếu bạn dùng time.sleep() hoặc các hàm khác từ module 'time'
+
 # --- Hàm hỗ trợ ---
 def get_vietnam_time():
     """Lấy thời gian hiện tại theo múi giờ Việt Nam (GMT+7)."""
@@ -1182,7 +1189,6 @@ def send_like(message):
             <i>Vui lòng liên hệ admin để được hỗ trợ.</i>
         </blockquote>
         """, parse_mode="HTML")
-
 @bot.message_handler(commands=['autolike'])
 # Đảm bảo 'bot' object và ADMIN_ID có sẵn
 def set_autolike(message):
@@ -1202,29 +1208,29 @@ def set_autolike(message):
         return
 
     # Gửi UID lên API để lưu
-# Thay thế đoạn này trong hàm set_autolike:
-    try:
-    # Thay requests.post() bằng requests.get() nếu bạn muốn gửi bằng GET
+    try: # <--- Dòng 'try' này phải thụt lề đúng với các lệnh phía trên
+        # Thay requests.post() bằng requests.get() nếu bạn muốn gửi bằng GET
         save_response = requests.get(SAVE_ID_API_URL, params={'uid': uid})
         save_response.raise_for_status()
         save_result = save_response.json()
-    except requests.exceptions.RequestException as e:
-    # ... (phần xử lý lỗi giữ nguyên)
 
+        # Phần xử lý kết quả API phải nằm trong khối try hoặc sau try-except
         if save_result.get("status") == "success":
-            bot.reply_to(message, f"✅ UID `{uid}` đã được thêm vào danh sách auto like thành công!.\nBot sẽ tự động buff like vào 00:00 mỗi ngày") # Thêm rõ giờ VN
+            bot.reply_to(message, f"✅ UID `{uid}` đã được thêm vào danh sách auto like thành công!.\nBot sẽ tự động buff like vào 00:00 mỗi ngày (giờ Việt Nam).")
             # Cập nhật ngay danh sách UID trong bộ nhớ và thực hiện like lần đầu
             load_auto_like_uids()
             # Thực hiện like ngay lập tức sau khi thêm auto like
             perform_initial_autolike(uid, message.chat.id)
         else:
             bot.reply_to(message, f"❌ Không thể thêm UID `{uid}` vào danh sách auto like. Lỗi: {save_result.get('message', 'Không rõ lỗi')}")
+
     except requests.exceptions.RequestException as e:
         bot.reply_to(message, f"❌ Lỗi khi kết nối đến API lưu UID: `{e}`")
     except json.JSONDecodeError:
         bot.reply_to(message, f"❌ Lỗi đọc phản hồi từ API lưu UID.")
     except Exception as e:
         bot.reply_to(message, f"❌ Lỗi không xác định khi thiết lập auto like: `{e}`")
+
 
 def perform_initial_autolike(uid, chat_id):
     """Thực hiện like ngay lập tức khi UID được thêm vào autolike."""
@@ -1239,7 +1245,7 @@ def perform_initial_autolike(uid, chat_id):
         status_emoji = "✅"
         message_text = f"""
         <blockquote>
-            <b>🎉 Lần Buff Like Đầu Tiên!</b>
+            <b>🎉 Kích Hoạt Auto Buff Like 24/7!</b>
             <i>UID:</i> <b><code>{result.get('UID', uid)}</code></b>
             <i>Tên người chơi:</i> <b><code>{result.get('PlayerNickname', 'N/A')}</code></b>
             <i>Số Like trước:</i> <b><code>{result.get('LikesbeforeCommand', 'N/A')}</code></b>
@@ -1272,6 +1278,7 @@ def perform_initial_autolike(uid, chat_id):
         logging.info(f"Đã gửi thông báo like ban đầu cho UID {uid} vào chat {chat_id}.")
     except Exception as e:
         logging.error(f"Không thể gửi thông báo like ban đầu cho UID {uid} vào chat {chat_id}: {e}")
+
 
 # Đừng quên đặt luồng này vào phần __main__ của bot bạn
 # threading.Thread(target=auto_like_scheduler, daemon=True).start()
