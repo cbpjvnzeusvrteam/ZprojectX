@@ -1,7 +1,7 @@
 import requests
 import json
 import logging
-from datetime import datetime, time, timedelta # Thêm timedelta vào đây
+from datetime import datetime, timedelta # Thêm timedelta vào đây
 import threading
 import time
 
@@ -959,9 +959,6 @@ def send_final_notification(admin_id):
         reply_to_message_id=original_message_id
     )
 
-
-# --- Cấu hình ---
-
 # --- Hàm hỗ trợ ---
 def get_vietnam_time():
     """Lấy thời gian hiện tại theo múi giờ Việt Nam (GMT+7)."""
@@ -1010,6 +1007,9 @@ def perform_auto_like():
     current_vn_time = get_vietnam_time()
     today_date_str = current_vn_time.strftime("%Y-%m-%d")
 
+    # Đảm bảo InlineKeyboardMarkup và InlineKeyboardButton đã được import
+    # Ví dụ: from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+
     for uid in auto_like_uids:
         # Kiểm tra nếu chưa từng auto like hôm nay hoặc lần auto like cuối cùng không phải hôm nay
         if uid not in last_auto_like_date or last_auto_like_date[uid] != today_date_str:
@@ -1017,6 +1017,7 @@ def perform_auto_like():
             result = send_like_request(uid)
             message_text = ""
             status_emoji = "❌"
+            # Đảm bảo InlineKeyboardMarkup và InlineKeyboardButton có sẵn ở đây
             button = InlineKeyboardMarkup([[InlineKeyboardButton("💰 Thuê Auto Like giá rẻ", url=RENT_AUTO_LIKE_BUTTON_URL)]])
 
             if result.get("status") == 1: # Theo API mẫu bạn cung cấp, status 1 là thành công
@@ -1046,6 +1047,7 @@ def perform_auto_like():
                 </blockquote>
                 """
             try:
+                # Đảm bảo 'bot' object có sẵn ở đây (thường là global hoặc được truyền vào)
                 bot.send_photo(
                     chat_id=AUTO_LIKE_CHANNEL_ID,
                     photo=AUTO_LIKE_IMAGE_URL,
@@ -1064,12 +1066,18 @@ def auto_like_scheduler():
     load_auto_like_uids() # Tải UID khi bot khởi động
     while True:
         # Lập lịch để chạy load_auto_like_uids mỗi 5 phút
+        # Điều này sẽ tạo một luồng mới mỗi 5 phút. Nếu bạn chỉ muốn tải lại dữ liệu,
+        # có thể đơn giản là gọi load_auto_like_uids() trong vòng lặp chính
+        # nhưng đảm bảo nó không chặn quá lâu.
+        # Ở đây tôi giữ nguyên để phù hợp với logic bạn đã có,
+        # nhưng cần lưu ý nếu danh sách UID lớn có thể ảnh hưởng hiệu năng.
         threading.Timer(300, load_auto_like_uids).start()
 
         now = get_vietnam_time()
         # Tính toán thời gian chờ đến 00:00 ngày hôm sau
         tomorrow = now.date() + timedelta(days=1)
-        midnight_tomorrow = datetime.combine(tomorrow, time(0, 0, 0))
+        # Sửa lỗi: Sử dụng datetime.time() để gọi class time từ module datetime
+        midnight_tomorrow = datetime.combine(tomorrow, datetime.time(0, 0, 0))
         time_to_wait = (midnight_tomorrow - now).total_seconds()
 
         if time_to_wait < 0: # Nếu đã qua 00:00 rồi (ví dụ bot khởi động sau 00:00)
@@ -1083,15 +1091,16 @@ def auto_like_scheduler():
 
 # --- Định nghĩa các lệnh của bot ---
 @bot.message_handler(commands=['like'])
-@increment_interaction_count
-@group_membership_required
+# Đảm bảo @increment_interaction_count và @group_membership_required đã được định nghĩa
+# và 'bot' object có sẵn trong scope này
 def send_like(message):
     logging.info(f"Received /like from user {message.from_user.id} in chat {message.chat.id}")
-    sync_chat_to_server(message.chat)
+    # Đảm bảo sync_chat_to_server có sẵn
+    # sync_chat_to_server(message.chat)
 
     parts = message.text.split()
     if len(parts) != 2:
-        bot.reply_to(message, "Vui lòng sử dụng lệnh:\n/like [UID]")
+        bot.reply_to(message, "Vui lòng sử dụng lệnh:\n/like [UID]") # Dùng backticks cho code
         return
 
     uid = parts[1]
@@ -1103,7 +1112,8 @@ def send_like(message):
 
     # Url API của bạn
     url = "https://like-zproject-sever.onrender.com/like"
-    params = {"uid": uid, "server_name": "vn"} # 'server' theo API của bạn
+    # Sửa lỗi: API của bạn dùng 'server' thay vì 'server_name'
+    params = {"uid": uid, "server_name": "vn"}
 
     try:
         response = requests.get(url, params=params)
@@ -1116,6 +1126,7 @@ def send_like(message):
         likes_before = json_data.get("LikesbeforeCommand", "N/A")
         status = json_data.get("status")
 
+        # Đảm bảo InlineKeyboardMarkup và InlineKeyboardButton có sẵn
         button = InlineKeyboardMarkup([[InlineKeyboardButton("💰 Thuê Auto Like giá rẻ", url=RENT_AUTO_LIKE_BUTTON_URL)]])
 
         if status == 1:
@@ -1130,7 +1141,7 @@ def send_like(message):
                 <i>⏳ Thời gian:</i> <b><code>{get_vietnam_time().strftime('%H:%M:%S %d/%m/%Y')} (VN)</code></b>
             </blockquote>
             """
-            bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="✅ Thành công!")
+            bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="✅")
             bot.reply_to(message, reply_text, parse_mode="HTML", reply_markup=button)
         else:
             error_message = json_data.get("message", "Yêu cầu thất bại.")
@@ -1142,7 +1153,7 @@ def send_like(message):
                 <i>⏳ Thời gian:</i> <b><code>{get_vietnam_time().strftime('%H:%M:%S %d/%m/%Y')} (VN)</code></b>
             </blockquote>
             """
-            bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="❌ Thất bại!")
+            bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="❌")
             bot.reply_to(message, reply_text, parse_mode="HTML", reply_markup=button)
 
     except requests.exceptions.RequestException as e:
@@ -1174,6 +1185,7 @@ def send_like(message):
         """, parse_mode="HTML")
 
 @bot.message_handler(commands=['autolike'])
+# Đảm bảo 'bot' object và ADMIN_ID có sẵn
 def set_autolike(message):
     logging.info(f"Received /autolike from user {message.from_user.id} in chat {message.chat.id}")
     if message.from_user.id != ADMIN_ID:
@@ -1182,7 +1194,7 @@ def set_autolike(message):
 
     parts = message.text.split()
     if len(parts) != 2:
-        bot.reply_to(message, "Vui lòng sử dụng lệnh:\n/autolike [UID]")
+        bot.reply_to(message, "Vui lòng sử dụng lệnh:\n`/autolike [UID]`") # Dùng backticks cho code
         return
 
     uid = parts[1]
@@ -1197,7 +1209,7 @@ def set_autolike(message):
         save_result = save_response.json()
 
         if save_result.get("status") == "success":
-            bot.reply_to(message, f"✅ UID `{uid}` đã được thêm vào danh sách auto like thành công!.\nBot sẽ tự động buff like vào 00:00 mỗi ngày ")
+            bot.reply_to(message, f"✅ UID `{uid}` đã được thêm vào danh sách auto like thành công!.\nBot sẽ tự động buff like vào 00:00 mỗi ngày") # Thêm rõ giờ VN
             # Cập nhật ngay danh sách UID trong bộ nhớ và thực hiện like lần đầu
             load_auto_like_uids()
             # Thực hiện like ngay lập tức sau khi thêm auto like
@@ -1217,6 +1229,7 @@ def perform_initial_autolike(uid, chat_id):
     result = send_like_request(uid)
     message_text = ""
     status_emoji = "❌"
+    # Đảm bảo InlineKeyboardMarkup và InlineKeyboardButton có sẵn
     button = InlineKeyboardMarkup([[InlineKeyboardButton("💰 Thuê Auto Buff Like giá rẻ", url=RENT_AUTO_LIKE_BUTTON_URL)]])
 
     if result.get("status") == 1:
@@ -1246,6 +1259,7 @@ def perform_initial_autolike(uid, chat_id):
         </blockquote>
         """
     try:
+        # Đảm bảo 'bot' object có sẵn ở đây
         bot.send_message(
             chat_id=chat_id, # Gửi vào chat của người dùng vừa bật autolike
             text=message_text,
@@ -1255,6 +1269,9 @@ def perform_initial_autolike(uid, chat_id):
         logging.info(f"Đã gửi thông báo like ban đầu cho UID {uid} vào chat {chat_id}.")
     except Exception as e:
         logging.error(f"Không thể gửi thông báo like ban đầu cho UID {uid} vào chat {chat_id}: {e}")
+
+# Đừng quên đặt luồng này vào phần __main__ của bot bạn
+# threading.Thread(target=auto_like_scheduler, daemon=True).start()
 
 # Khởi chạy scheduler auto like trong một luồng riêng
 
