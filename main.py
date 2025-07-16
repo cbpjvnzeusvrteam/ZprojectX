@@ -961,9 +961,30 @@ def send_final_notification(admin_id):
 import requests
 import json
 import logging
-from datetime import datetime, time, timedelta # Chắc chắn có 'time' ở đây
+from datetime import datetime, time, timedelta # Đã có 'time' ở đây
 import threading
 import time # Giữ lại nếu bạn dùng time.sleep() hoặc các hàm khác từ module 'time'
+
+# --- Đảm bảo các biến cấu hình này đã được định nghĩa ở đâu đó trong code của bạn ---
+# Ví dụ:
+# ADMIN_ID = 123456789 # Thay bằng ID admin của bạn
+# AUTO_LIKE_CHANNEL_ID = -1002625481749 # ID nhóm để gửi thông báo auto like
+# SAVE_ID_API_URL = "http://zproject.x10.mx/api-save-id.php"
+# SAVE_ID_JSON_URL = "http://zproject.x10.mx/save-id-auto.json"
+# RENT_AUTO_LIKE_BUTTON_URL = "https://t.me/zproject2"
+# AUTO_LIKE_IMAGE_URL = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTX1YPg46wifavrl54ymwR5a6m5d4dgJnkRsg&s"
+
+# Lưu trữ các UID cần auto like (Đảm bảo có global declaration nếu dùng trong hàm)
+auto_like_uids = []
+last_auto_like_date = {} # Lưu ngày cuối cùng auto like cho mỗi UID
+
+# Giả định bot, InlineKeyboardMarkup, InlineKeyboardButton,
+# increment_interaction_count, group_membership_required, sync_chat_to_server
+# đã được định nghĩa hoặc import từ thư viện telebot
+# from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+# import telebot
+# bot = telebot.TeleBot(TOKEN)
+
 
 # --- Hàm hỗ trợ ---
 def get_vietnam_time():
@@ -995,7 +1016,8 @@ def load_auto_like_uids():
 def send_like_request(uid):
     """Gửi yêu cầu like đến API."""
     url = "https://like-zproject-sever.onrender.com/like"
-    params = {"uid": uid, "server": "vn"} # 'server' thay vì 'server_name' như bạn đã đề cập trong URL gốc
+    # SỬA Ở ĐÂY: đổi 'server' thành 'server_name' theo yêu cầu của bạn
+    params = {"uid": uid, "server_name": "vn"}
     try:
         response = requests.get(url, params=params)
         response.raise_for_status() # Nâng ngoại lệ cho mã trạng thái lỗi HTTP
@@ -1020,7 +1042,7 @@ def perform_auto_like():
         # Kiểm tra nếu chưa từng auto like hôm nay hoặc lần auto like cuối cùng không phải hôm nay
         if uid not in last_auto_like_date or last_auto_like_date[uid] != today_date_str:
             logging.info(f"Đang thực hiện auto like cho UID: {uid}...")
-            result = send_like_request(uid)
+            result = send_like_request(uid) # Hàm này đã được sửa để dùng 'server_name'
             message_text = ""
             status_emoji = "❌"
             # Đảm bảo InlineKeyboardMarkup và InlineKeyboardButton có sẵn ở đây
@@ -1082,8 +1104,8 @@ def auto_like_scheduler():
         now = get_vietnam_time()
         # Tính toán thời gian chờ đến 00:00 ngày hôm sau
         tomorrow = now.date() + timedelta(days=1)
-        # Sửa lỗi: Sử dụng datetime.time() để gọi class time từ module datetime
-        midnight_tomorrow = datetime.combine(tomorrow, datetime.time(0, 0, 0))
+        # SỬA LỖI TẠI ĐÂY: Thay 'datetime.time' bằng 'time'
+        midnight_tomorrow = datetime.combine(tomorrow, time(0, 0, 0))
         time_to_wait = (midnight_tomorrow - now).total_seconds()
 
         if time_to_wait < 0: # Nếu đã qua 00:00 rồi (ví dụ bot khởi động sau 00:00)
@@ -1118,7 +1140,7 @@ def send_like(message):
 
     # Url API của bạn
     url = "https://like-zproject-sever.onrender.com/like"
-    # Sửa lỗi: API của bạn dùng 'server' thay vì 'server_name'
+    # SỬA Ở ĐÂY: API của bạn dùng 'server_name'
     params = {"uid": uid, "server_name": "vn"}
 
     try:
@@ -1150,7 +1172,7 @@ def send_like(message):
             bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="✅")
             bot.reply_to(message, reply_text, parse_mode="HTML", reply_markup=button)
         else:
-            error_message = json_data.get("message", "Yêu cầu thất bại.")
+            error_message = json_data.get("message", "Không rõ lỗi")
             reply_text = f"""
             <blockquote>
                 <b>❌ Buff Like Thất Bại!</b>
@@ -1189,6 +1211,7 @@ def send_like(message):
             <i>Vui lòng liên hệ admin để được hỗ trợ.</i>
         </blockquote>
         """, parse_mode="HTML")
+
 @bot.message_handler(commands=['autolike'])
 # Đảm bảo 'bot' object và ADMIN_ID có sẵn
 def set_autolike(message):
@@ -1208,13 +1231,12 @@ def set_autolike(message):
         return
 
     # Gửi UID lên API để lưu
-    try: # <--- Dòng 'try' này phải thụt lề đúng với các lệnh phía trên
-        # Thay requests.post() bằng requests.get() nếu bạn muốn gửi bằng GET
+    try:
+        # Thay requests.post() bằng requests.get() nếu bạn muốn gửi bằng GET (đã sửa trong API PHP)
         save_response = requests.get(SAVE_ID_API_URL, params={'uid': uid})
         save_response.raise_for_status()
         save_result = save_response.json()
 
-        # Phần xử lý kết quả API phải nằm trong khối try hoặc sau try-except
         if save_result.get("status") == "success":
             bot.reply_to(message, f"✅ UID `{uid}` đã được thêm vào danh sách auto like thành công!.\nBot sẽ tự động buff like vào 00:00 mỗi ngày (giờ Việt Nam).")
             # Cập nhật ngay danh sách UID trong bộ nhớ và thực hiện like lần đầu
@@ -1245,7 +1267,7 @@ def perform_initial_autolike(uid, chat_id):
         status_emoji = "✅"
         message_text = f"""
         <blockquote>
-            <b>🎉 Kích Hoạt Auto Buff Like 24/7!</b>
+            <b>🎉 Kích Hoạt Auto Buff Like 24/7 Thành Công!</b>
             <i>UID:</i> <b><code>{result.get('UID', uid)}</code></b>
             <i>Tên người chơi:</i> <b><code>{result.get('PlayerNickname', 'N/A')}</code></b>
             <i>Số Like trước:</i> <b><code>{result.get('LikesbeforeCommand', 'N/A')}</code></b>
@@ -1260,7 +1282,7 @@ def perform_initial_autolike(uid, chat_id):
         error_message = result.get("message", "Không rõ lỗi")
         message_text = f"""
         <blockquote>
-            <b>⚠️ Lần Buff Like Đầu Tiên Sau Khi Kích Hoạt Auto Like Thất Bại!</b>
+            <b>⚠️ Kích Hoạt Auto Buff Like 24/7 Thất Bại!</b>
             <i>UID:</i> <b><code>{uid}</code></b>
             <i>Trạng thái:</i> <b>Thất bại</b>
             <i>Lỗi:</i> <i>{error_message}</i>
@@ -1279,11 +1301,9 @@ def perform_initial_autolike(uid, chat_id):
     except Exception as e:
         logging.error(f"Không thể gửi thông báo like ban đầu cho UID {uid} vào chat {chat_id}: {e}")
 
-
 # Đừng quên đặt luồng này vào phần __main__ của bot bạn
 # threading.Thread(target=auto_like_scheduler, daemon=True).start()
 
-# Khởi chạy scheduler auto like trong một luồng riêng
 
 @bot.message_handler(commands=["ngl"])
 @increment_interaction_count
