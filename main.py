@@ -1050,7 +1050,7 @@ def perform_auto_like():
                 status_emoji = "✅"
                 message_text = f"""
                 <blockquote>
-                    <b> Tự Động Buff Like 24/7 💥{status_emoji}</b>
+                    <b> Tự Động Auto Buff Like 24/7 💥{status_emoji}</b>
                     <i>UID:</i> <b><code>{result.get('UID', uid)}</code></b>
                     <i>Tên người chơi:</i> <b><code>{result.get('PlayerNickname', 'N/A')}</code></b>
                     <i>Số Like trước:</i> <b><code>{result.get('LikesbeforeCommand', 'N/A')}</code></b>
@@ -1114,6 +1114,8 @@ def auto_like_scheduler():
 
 # --- Định nghĩa các lệnh của bot ---
 @bot.message_handler(commands=['like'])
+@increment_interaction_count
+@group_membership_required
 def send_like(message):
     logging.info(f"Received /like from user {message.from_user.id} in chat {message.chat.id}")
     # Đảm bảo sync_chat_to_server có sẵn (nếu sử dụng)
@@ -1169,7 +1171,7 @@ def send_like(message):
             error_message = json_data.get("message", "Yêu cầu thất bại.")
             reply_text = f"""
             <blockquote>
-                <b>❌ Buff Like Thất Bại!</b>
+                <b>❌ Buff Like Thất Bại! ( 1 ngày chỉ được buff 1 lần nhé )</b>
                 <i>🆔 UID:</i> <b><code>{uid}</code></b>
                 <i>Lỗi:</i> <i>{error_message}</i>
                 <i>⏳ Thời gian:</i> <b><code>{get_vietnam_time().strftime('%H:%M:%S %d/%m/%Y')} (VN)</code></b>
