@@ -1203,10 +1203,14 @@ def set_autolike(message):
         return
 
     # Gửi UID lên API để lưu
+# Thay thế đoạn này trong hàm set_autolike:
     try:
-        save_response = requests.post(SAVE_ID_API_URL, data={'uid': uid})
+    # Thay requests.post() bằng requests.get() nếu bạn muốn gửi bằng GET
+        save_response = requests.get(SAVE_ID_API_URL, params={'uid': uid})
         save_response.raise_for_status()
         save_result = save_response.json()
+    except requests.exceptions.RequestException as e:
+    # ... (phần xử lý lỗi giữ nguyên)
 
         if save_result.get("status") == "success":
             bot.reply_to(message, f"✅ UID `{uid}` đã được thêm vào danh sách auto like thành công!.\nBot sẽ tự động buff like vào 00:00 mỗi ngày") # Thêm rõ giờ VN
