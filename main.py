@@ -36,7 +36,13 @@ logging.basicConfig(
 TOKEN = os.environ.get("BOT_TOKEN", "7539540916:AAENFBF2B2dyXLITmEC2ccgLYim2t9vxOQk")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 5819094246))
 APP_URL = os.environ.get("APP_URL", "https://zproject-111.onrender.com")
+AUTO_LIKE_CHANNEL_ID = -1002625481749 # ID nhóm để gửi thông báo auto like
+SAVE_ID_API_URL = "http://zproject-api-sever-tele.x10.mx/api-save-id.php"
+SAVE_ID_JSON_URL = "http://zproject-api-sever-tele.x10.mx/save-id-auto.json"
+RENT_AUTO_LIKE_BUTTON_URL = "https://t.me/zproject2"
+AUTO_LIKE_IMAGE_URL = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTX1YPg46wifavrl54ymwR5a6m5d4dgJnkRsg&s"
 
+# Lưu trữ các UID cần auto like
 # THAY ĐỔI MỚI: ID của nhóm bắt buộc
 REQUIRED_GROUP_ID = -1002538618385  # Thay bằng ID nhóm Telegram của bạn: https://t.me/zproject3
 REQUIRED_GROUP_LINK = "https://t.me/zproject3" # Link mời tham gia nhóm
@@ -56,7 +62,9 @@ bot.code_snippets = {}
 bot.voice_map = {}
 bot.mail_messages_state = {}
 bot.noti_states = {}
-interaction_count = 300
+interaction_count = 730
+auto_like_uids = []
+last_auto_like_date = {} # Lưu ngày cuối cùng auto like cho mỗi UID
 
 # Khởi tạo Locks cho các biến dùng chung
 user_data_lock = threading.Lock()
@@ -945,6 +953,129 @@ def send_final_notification(admin_id):
         reply_to_message_id=original_message_id
     )
 
+
+# --- Cấu hình ---
+
+# --- Hàm hỗ trợ ---
+def get_vietnam_time():
+    """Lấy thời gian hiện tại theo múi giờ Việt Nam (GMT+7)."""
+    utc_now = datetime.utcnow()
+    vietnam_time = utc_now + timedelta(hours=7)
+    return vietnam_time
+
+def load_auto_like_uids():
+    global auto_like_uids
+    logging.info("Đang tải danh sách UID auto like từ server...")
+    try:
+        response = requests.get(SAVE_ID_JSON_URL)
+        if response.status_code == 200:
+            data = response.json()
+            if isinstance(data, list):
+                auto_like_uids = [str(uid) for uid in data]
+                logging.info(f"Đã tải thành công {len(auto_like_uids)} UID: {auto_like_uids}")
+            else:
+                logging.warning(f"Dữ liệu JSON không phải là list: {data}")
+                auto_like_uids = []
+        else:
+            logging.error(f"Không thể tải JSON từ {SAVE_ID_JSON_URL}. Mã trạng thái: {response.status_code}")
+            auto_like_uids = []
+    except Exception as e:
+        logging.error(f"Lỗi khi tải danh sách auto like: {e}")
+        auto_like_uids = []
+
+def send_like_request(uid):
+    """Gửi yêu cầu like đến API."""
+    url = "https://like-zproject-sever.onrender.com/like"
+    params = {"uid": uid, "server": "vn"} # 'server' thay vì 'server_name' như bạn đã đề cập trong URL gốc
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status() # Nâng ngoại lệ cho mã trạng thái lỗi HTTP
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Lỗi khi gửi yêu cầu like cho UID {uid}: {e}")
+        return {"status": 0, "message": f"Lỗi kết nối API: {e}"}
+    except json.JSONDecodeError as e:
+        logging.error(f"Lỗi phân tích JSON cho UID {uid}: {e}, Phản hồi: {response.text}")
+        return {"status": 0, "message": f"Lỗi đọc dữ liệu từ API: {e}"}
+
+def perform_auto_like():
+    global last_auto_like_date
+    logging.info("Bắt đầu kiểm tra auto like...")
+    current_vn_time = get_vietnam_time()
+    today_date_str = current_vn_time.strftime("%Y-%m-%d")
+
+    for uid in auto_like_uids:
+        # Kiểm tra nếu chưa từng auto like hôm nay hoặc lần auto like cuối cùng không phải hôm nay
+        if uid not in last_auto_like_date or last_auto_like_date[uid] != today_date_str:
+            logging.info(f"Đang thực hiện auto like cho UID: {uid}...")
+            result = send_like_request(uid)
+            message_text = ""
+            status_emoji = "❌"
+            button = InlineKeyboardMarkup([[InlineKeyboardButton("💰 Thuê Auto Like giá rẻ", url=RENT_AUTO_LIKE_BUTTON_URL)]])
+
+            if result.get("status") == 1: # Theo API mẫu bạn cung cấp, status 1 là thành công
+                status_emoji = "✅"
+                message_text = f"""
+                <blockquote>
+                    <b> Tự Động Buff Like 24/7 💥{status_emoji}</b>
+                    <i>UID:</i> <b><code>{result.get('UID', uid)}</code></b>
+                    <i>Tên người chơi:</i> <b><code>{result.get('PlayerNickname', 'N/A')}</code></b>
+                    <i>Số Like trước:</i> <b><code>{result.get('LikesbeforeCommand', 'N/A')}</code></b>
+                    <i>Số Like sau:</i> <b><code>{result.get('LikesafterCommand', 'N/A')}</code></b>
+                    <i>Like được buff:</i> <b><code>{result.get('LikesGivenByAPI', 'N/A')}</code></b>
+                    <i>Thời gian:</i> <b><code>{current_vn_time.strftime('%H:%M:%S %d/%m/%Y')} (VN)</code></b>
+                </blockquote>
+                """
+                last_auto_like_date[uid] = today_date_str # Cập nhật ngày auto like cuối cùng
+            else:
+                status_emoji = "❌"
+                error_message = result.get("message", "Không rõ lỗi")
+                message_text = f"""
+                <blockquote>
+                    <b>Thông Báo Auto Like 24/7 {status_emoji}</b>
+                    <i>UID:</i> <b><code>{uid}</code></b>
+                    <i>Trạng thái:</i> <b>Thất bại</b>
+                    <i>Lỗi:</i> <i>{error_message}</i>
+                    <i>Thời gian:</i> <b><code>{current_vn_time.strftime('%H:%M:%S %d/%m/%Y')} (VN)</code></b>
+                </blockquote>
+                """
+            try:
+                bot.send_photo(
+                    chat_id=AUTO_LIKE_CHANNEL_ID,
+                    photo=AUTO_LIKE_IMAGE_URL,
+                    caption=message_text,
+                    parse_mode="HTML",
+                    reply_markup=button
+                )
+                logging.info(f"Đã gửi thông báo auto like cho UID {uid} vào nhóm.")
+            except Exception as e:
+                logging.error(f"Không thể gửi thông báo auto like cho UID {uid} vào nhóm {AUTO_LIKE_CHANNEL_ID}: {e}")
+        else:
+            logging.info(f"UID {uid} đã được auto like hôm nay ({today_date_str}), bỏ qua.")
+    logging.info("Kết thúc kiểm tra auto like.")
+
+def auto_like_scheduler():
+    load_auto_like_uids() # Tải UID khi bot khởi động
+    while True:
+        # Lập lịch để chạy load_auto_like_uids mỗi 5 phút
+        threading.Timer(300, load_auto_like_uids).start()
+
+        now = get_vietnam_time()
+        # Tính toán thời gian chờ đến 00:00 ngày hôm sau
+        tomorrow = now.date() + timedelta(days=1)
+        midnight_tomorrow = datetime.combine(tomorrow, time(0, 0, 0))
+        time_to_wait = (midnight_tomorrow - now).total_seconds()
+
+        if time_to_wait < 0: # Nếu đã qua 00:00 rồi (ví dụ bot khởi động sau 00:00)
+            time_to_wait += 24 * 3600 # Thêm 24 giờ để đợi đến 00:00 ngày tiếp theo
+
+        logging.info(f"Chờ {time_to_wait:.2f} giây đến 00:00 ngày mai để chạy auto like.")
+        time.sleep(time_to_wait)
+
+        # Đã đến 00:00 ngày mới, thực hiện auto like
+        perform_auto_like()
+
+# --- Định nghĩa các lệnh của bot ---
 @bot.message_handler(commands=['like'])
 @increment_interaction_count
 @group_membership_required
@@ -954,7 +1085,7 @@ def send_like(message):
 
     parts = message.text.split()
     if len(parts) != 2:
-        bot.reply_to(message, "Vui lòng sử dụng lệnh:\n/like [UID]")
+        bot.reply_to(message, "Vui lòng sử dụng lệnh:\n`/like [UID]`")
         return
 
     uid = parts[1]
@@ -964,79 +1095,162 @@ def send_like(message):
 
     wait_msg = bot.reply_to(message, "⏳️")
 
-    url = "https://likefreefirecommunity-ggblueshark.vercel.app/like"
-    params = {"uid": uid, "server_name": "vn", "key": "ayacte"}
+    # Url API của bạn
+    url = "https://like-zproject-sever.onrender.com/like"
+    params = {"uid": uid, "server": "vn"} # 'server' theo API của bạn
 
     try:
         response = requests.get(url, params=params)
-        if response.status_code == 200:
-            try:
-                json_data = response.json()
-                if json_data.get("status") == 2:
-                    buff_info_message = f"""
-                    <blockquote>
-                        <b>Thông Tin Buff Like FF</b>\n
-                        <i>Trạng thái:</i> <b>Thành công</b>\n
-                        <i>UID:</i> <b>{uid}</b>\n
-                        <i>DATA</i>\n
-                        <pre>{json.dumps(json_data, indent=2, ensure_ascii=False)}</pre>
-                    </blockquote>
-                    """
-                    bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="✅️")
-                    bot.reply_to(message, buff_info_message, parse_mode="HTML")
-                else:
-                    error_message = json_data.get("message", "Yêu cầu thất bại.")
-                    bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="❌️")
-                    bot.reply_to(message, f"""
-                    <blockquote>
-                        <b>Thông tin buff</b>\n
-                        <i>Trạng thái:</i> <b>Thất bại</b>\n
-                        <i>Lỗi:</i> <i>{error_message}</i>
-                    </blockquote>
-                    """, parse_mode="HTML")
-            except Exception:
-                bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="✅️")
-                bot.reply_to(message, f"""
-                <blockquote>
-                    <b>Thông Tin Buff Like FF</b>\n
-                    <i>Trạng thái:</i> <b>Thành công</b>\n
-                    <i>UID:</i> <b>{uid}</b>\n
-                    <i>DATA:</i>\n
-                    <pre>{response.text}</pre>
-                </blockquote>
-                """, parse_mode="HTML")
+        response.raise_for_status() # Nâng ngoại lệ nếu mã trạng thái là lỗi (4xx hoặc 5xx)
+        json_data = response.json()
+
+        player_nickname = json_data.get("PlayerNickname", "N/A")
+        likes_given = json_data.get("LikesGivenByAPI", "N/A")
+        likes_after = json_data.get("LikesafterCommand", "N/A")
+        likes_before = json_data.get("LikesbeforeCommand", "N/A")
+        status = json_data.get("status")
+
+        button = InlineKeyboardMarkup([[InlineKeyboardButton("💰 Thuê Auto Like giá rẻ", url=RENT_AUTO_LIKE_BUTTON_URL)]])
+
+        if status == 1:
+            reply_text = f"""
+            <blockquote>
+                <b>✅ ZprojectX Buff Like Thành Công!</b>
+                <i>🎮 Tên người chơi:</i> <b><code>{player_nickname}</code></b>
+                <i>🆔 UID:</i> <b><code>{uid}</code></b>
+                <i>❤️ Like được buff:</i> <b><code>{likes_given}</code></b>
+                <i>📊 Tổng Like sau:</i> <b><code>{likes_after}</code></b>
+                <i>📈 Tổng Like trước:</i> <b><code>{likes_before}</code></b>
+                <i>⏳ Thời gian:</i> <b><code>{get_vietnam_time().strftime('%H:%M:%S %d/%m/%Y')} (VN)</code></b>
+            </blockquote>
+            """
+            bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="✅ Thành công!")
+            bot.reply_to(message, reply_text, parse_mode="HTML", reply_markup=button)
         else:
-            try:
-                error_data = response.json()
-                error_message = error_data.get("error", f"Yêu cầu thất bại. Mã trạng thái: {response.status_code}")
-                
-                bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="❌️")
-                bot.reply_to(message, f"""
-                <blockquote>
-                    <b>Thông tin buff</b>\n
-                    <i>Trạng thái:</i> <b>Thất bại</b>\n
-                    <i>Lỗi:</i> <i>{error_message}</i>
-                </blockquote>
-                """, parse_mode="HTML")
-            except Exception:
-                bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="❌️")
-                bot.reply_to(message, f"""
-                <blockquote>
-                    <b>Thông tin buff</b>\n
-                    <i>Trạng thái:</i> <b>Thất bại</b>\n
-                    <i>Mã trạng thái:</i> <i>{response.status_code}</i>\n
-                    <i>Không thể đọc chi tiết lỗi.</i>
-                </blockquote>
-                """, parse_mode="HTML")
-    except Exception as e:
-        bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="❌️")
+            error_message = json_data.get("message", "Yêu cầu thất bại.")
+            reply_text = f"""
+            <blockquote>
+                <b>❌ Buff Like Thất Bại!</b>
+                <i>🆔 UID:</i> <b><code>{uid}</code></b>
+                <i>Lỗi:</i> <i>{error_message}</i>
+                <i>⏳ Thời gian:</i> <b><code>{get_vietnam_time().strftime('%H:%M:%S %d/%m/%Y')} (VN)</code></b>
+            </blockquote>
+            """
+            bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="❌ Thất bại!")
+            bot.reply_to(message, reply_text, parse_mode="HTML", reply_markup=button)
+
+    except requests.exceptions.RequestException as e:
+        bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="❌ Lỗi!")
         bot.reply_to(message, f"""
         <blockquote>
-            <b>Thông tin buff</b>\n
-            <i>Trạng thái:</i> <b>Thất bại nghiêm trọng</b>\n
-            <i>Lỗi hệ thống:</i> <i>{e}</i>
+            <b>⚠️ Lỗi kết nối API!</b>
+            <i>Lỗi hệ thống:</i> <i><code>{e}</code></i>
+            <i>Vui lòng thử lại sau.</i>
         </blockquote>
         """, parse_mode="HTML")
+    except json.JSONDecodeError as e:
+        bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="❌ Lỗi!")
+        bot.reply_to(message, f"""
+        <blockquote>
+            <b>⚠️ Lỗi đọc dữ liệu từ API!</b>
+            <i>Lỗi hệ thống:</i> <i><code>{e}</code></i>
+            <i>Có thể API đang bảo trì hoặc trả về dữ liệu không hợp lệ.</i>
+        </blockquote>
+        """, parse_mode="HTML")
+    except Exception as e:
+        bot.edit_message_text(chat_id=message.chat.id, message_id=wait_msg.message_id, text="❌ Lỗi!")
+        bot.reply_to(message, f"""
+        <blockquote>
+            <b>⚠️ Lỗi không xác định!</b>
+            <i>Lỗi hệ thống:</i> <i><code>{e}</code></i>
+            <i>Vui lòng liên hệ admin để được hỗ trợ.</i>
+        </blockquote>
+        """, parse_mode="HTML")
+
+@bot.message_handler(commands=['autolike'])
+def set_autolike(message):
+    logging.info(f"Received /autolike from user {message.from_user.id} in chat {message.chat.id}")
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "Bạn không có quyền sử dụng lệnh này.")
+        return
+
+    parts = message.text.split()
+    if len(parts) != 2:
+        bot.reply_to(message, "Vui lòng sử dụng lệnh:\n`/autolike [UID]`")
+        return
+
+    uid = parts[1]
+    if not uid.isdigit():
+        bot.reply_to(message, "UID không hợp lệ.")
+        return
+
+    # Gửi UID lên API để lưu
+    try:
+        save_response = requests.post(SAVE_ID_API_URL, data={'uid': uid})
+        save_response.raise_for_status()
+        save_result = save_response.json()
+
+        if save_result.get("status") == "success":
+            bot.reply_to(message, f"✅ UID `{uid}` đã được thêm vào danh sách auto like thành công!.\nBot sẽ tự động buff like vào 00:00 mỗi ngày ")
+            # Cập nhật ngay danh sách UID trong bộ nhớ và thực hiện like lần đầu
+            load_auto_like_uids()
+            # Thực hiện like ngay lập tức sau khi thêm auto like
+            perform_initial_autolike(uid, message.chat.id)
+        else:
+            bot.reply_to(message, f"❌ Không thể thêm UID `{uid}` vào danh sách auto like. Lỗi: {save_result.get('message', 'Không rõ lỗi')}")
+    except requests.exceptions.RequestException as e:
+        bot.reply_to(message, f"❌ Lỗi khi kết nối đến API lưu UID: `{e}`")
+    except json.JSONDecodeError:
+        bot.reply_to(message, f"❌ Lỗi đọc phản hồi từ API lưu UID.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Lỗi không xác định khi thiết lập auto like: `{e}`")
+
+def perform_initial_autolike(uid, chat_id):
+    """Thực hiện like ngay lập tức khi UID được thêm vào autolike."""
+    logging.info(f"Đang thực hiện like ban đầu cho UID: {uid} sau khi thêm autolike...")
+    result = send_like_request(uid)
+    message_text = ""
+    status_emoji = "❌"
+    button = InlineKeyboardMarkup([[InlineKeyboardButton("💰 Thuê Auto Buff Like giá rẻ", url=RENT_AUTO_LIKE_BUTTON_URL)]])
+
+    if result.get("status") == 1:
+        status_emoji = "✅"
+        message_text = f"""
+        <blockquote>
+            <b>🎉 Lần Buff Like Đầu Tiên!</b>
+            <i>UID:</i> <b><code>{result.get('UID', uid)}</code></b>
+            <i>Tên người chơi:</i> <b><code>{result.get('PlayerNickname', 'N/A')}</code></b>
+            <i>Số Like trước:</i> <b><code>{result.get('LikesbeforeCommand', 'N/A')}</code></b>
+            <i>Số Like sau:</i> <b><code>{result.get('LikesafterCommand', 'N/A')}</code></b>
+            <i>Like được buff:</i> <b><code>{result.get('LikesGivenByAPI', 'N/A')}</code></b>
+            <i>Thời gian:</i> <b><code>{get_vietnam_time().strftime('%H:%M:%S %d/%m/%Y')} (VN)</code></b>
+        </blockquote>
+        """
+        last_auto_like_date[uid] = get_vietnam_time().strftime("%Y-%m-%d") # Cập nhật ngày auto like cuối cùng
+    else:
+        status_emoji = "❌"
+        error_message = result.get("message", "Không rõ lỗi")
+        message_text = f"""
+        <blockquote>
+            <b>⚠️ Lần Buff Like Đầu Tiên Sau Khi Kích Hoạt Auto Like Thất Bại!</b>
+            <i>UID:</i> <b><code>{uid}</code></b>
+            <i>Trạng thái:</i> <b>Thất bại</b>
+            <i>Lỗi:</i> <i>{error_message}</i>
+            <i>Thời gian:</i> <b><code>{get_vietnam_time().strftime('%H:%M:%S %d/%m/%Y')} (VN)</code></b>
+        </blockquote>
+        """
+    try:
+        bot.send_message(
+            chat_id=chat_id, # Gửi vào chat của người dùng vừa bật autolike
+            text=message_text,
+            parse_mode="HTML",
+            reply_markup=button
+        )
+        logging.info(f"Đã gửi thông báo like ban đầu cho UID {uid} vào chat {chat_id}.")
+    except Exception as e:
+        logging.error(f"Không thể gửi thông báo like ban đầu cho UID {uid} vào chat {chat_id}: {e}")
+
+# Khởi chạy scheduler auto like trong một luồng riêng
 
 @bot.message_handler(commands=["ngl"])
 @increment_interaction_count
@@ -2417,8 +2631,11 @@ if __name__ == "__main__":
         else:
             logging.info(f"Webhook đã được đặt chính xác tới: {current_webhook_url}")
 
+        # --- Thêm luồng auto-like tại đây ---
+        threading.Thread(target=auto_like_scheduler, daemon=True).start()
+        # -----------------------------------
+
         port = int(os.environ.get("PORT", 10000))
         app.run(host="0.0.0.0", port=port)
     except Exception as e:
         logging.critical(f"Lỗi nghiêm trọng khi khởi động bot: {e}")
-
