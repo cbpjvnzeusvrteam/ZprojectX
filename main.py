@@ -1,10 +1,9 @@
 import requests
 import json
 import logging
-from datetime import datetime, timedelta # Thêm timedelta vào đây
+from datetime import datetime, time, timedelta # Chắc chắn có 'time' ở đây
 import threading
-import time
-
+import time # Giữ lại nếu bạn dùng time.sleep() hoặc các hàm khác từ module 'time'
 import os
 import time
 import logging
