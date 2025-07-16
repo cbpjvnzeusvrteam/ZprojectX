@@ -1119,6 +1119,8 @@ def auto_like_scheduler():
 
 # --- Định nghĩa các lệnh của bot ---
 @bot.message_handler(commands=['like'])
+@increment_interaction_count
+@group_membership_required
 # Đảm bảo @increment_interaction_count và @group_membership_required đã được định nghĩa
 # và 'bot' object có sẵn trong scope này
 def send_like(message):
