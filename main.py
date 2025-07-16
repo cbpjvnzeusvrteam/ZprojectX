@@ -1,3 +1,9 @@
+import requests
+import json
+import logging
+from datetime import datetime, time, timedelta # Thêm timedelta vào đây
+import threading
+import time
 
 import os
 import time
@@ -1085,7 +1091,7 @@ def send_like(message):
 
     parts = message.text.split()
     if len(parts) != 2:
-        bot.reply_to(message, "Vui lòng sử dụng lệnh:\n`/like [UID]`")
+        bot.reply_to(message, "Vui lòng sử dụng lệnh:\n/like [UID]")
         return
 
     uid = parts[1]
@@ -1097,7 +1103,7 @@ def send_like(message):
 
     # Url API của bạn
     url = "https://like-zproject-sever.onrender.com/like"
-    params = {"uid": uid, "server": "vn"} # 'server' theo API của bạn
+    params = {"uid": uid, "server_name": "vn"} # 'server' theo API của bạn
 
     try:
         response = requests.get(url, params=params)
@@ -1176,7 +1182,7 @@ def set_autolike(message):
 
     parts = message.text.split()
     if len(parts) != 2:
-        bot.reply_to(message, "Vui lòng sử dụng lệnh:\n`/autolike [UID]`")
+        bot.reply_to(message, "Vui lòng sử dụng lệnh:\n/autolike [UID]")
         return
 
     uid = parts[1]
